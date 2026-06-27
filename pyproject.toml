@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boldt-posttrain-autoresearch"
+version = "0.1.0"
+description = "German-first post-training AutoResearch loop for mayflowergmbh/boldt-dc-1b-german-it-16k-dpo (branch -> specialist -> merge -> eval -> promote)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Boldt post-training maintainers" }]
+keywords = ["post-training", "german", "lora", "qlora", "dpo", "mergekit", "instruction-tuning"]
+
+# The loop's CORE and ALL dry-run / validation / scoring / integrity gates run on the
+# Python standard library only. Heavy ML dependencies are optional and used solely by the
+# `--real` training / merge / eval code paths (which are dry-runnable without weights here).
+dependencies = []
+
+[project.optional-dependencies]
+train = [
+  "torch>=2.1",
+  "transformers>=4.45",
+  "trl>=0.9",
+  "peft>=0.11",
+  "accelerate>=0.30",
+  "datasets>=2.19",
+  "bitsandbytes>=0.43",
+]
+# Mergekit for the merge-search lever (linear/slerp/ties/dare-ties over compatible checkpoints).
+merge = [
+  "mergekit>=0.0.5",
+]
+# German-core benchmark suite (lm-eval German tasks) + dataset access for instruction evals.
+eval = [
+  "lm-eval>=0.4.3",
+  "datasets>=2.19",
+]
+# Language-id for the German-candidate data filter (deterministic fastText/langid check).
+data = [
+  "fasttext-langdetect>=1.0",
+  "huggingface-hub>=0.23",
+  "datasets>=2.19",
+]
+dev = [
+  "ruff>=0.5",
+]
+
+[project.scripts]
+pt-status = "boldt_posttrain.cli:main_status"
+pt-report = "boldt_posttrain.cli:main_report"
+pt-integrity = "boldt_posttrain.cli:main_integrity"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

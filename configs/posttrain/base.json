@@ -1,0 +1,30 @@
+{
+  "protected": true,
+  "description": "Base defaults for Boldt German post-training AutoResearch. Edit experiments/current.json rather than this file during loops.",
+  "paths": {
+    "outputs": "outputs/posttrain",
+    "data": "outputs/posttrain/data",
+    "runs": "outputs/posttrain/runs",
+    "evals": "outputs/posttrain/evals",
+    "checkpoints": "outputs/posttrain/checkpoints",
+    "frontier": "outputs/posttrain/frontier.json",
+    "results": "outputs/posttrain/results.tsv"
+  },
+  "integrity": {
+    "editable_globs": [
+      "configs/posttrain/current.json",
+      "configs/posttrain/experiments/*.json",
+      "docs/experiments/*.md"
+    ],
+    "protected_globs": [
+      "data/eval/**",
+      "scripts/pt_eval.py",
+      "scripts/pt_score.py",
+      "scripts/pt_promote.py",
+      "scripts/check_posttrain_integrity.py",
+      "outputs/posttrain/baseline/**",
+      "CLAUDE.md",
+      "AUTORESEARCH_POSTTRAIN.md"
+    ]
+  }
+}
