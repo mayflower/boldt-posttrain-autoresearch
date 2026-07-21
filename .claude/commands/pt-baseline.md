@@ -1,33 +1,13 @@
 ---
-description: Establish or inspect baseline eval for the seed model
-argument-hint: "[dry|real]"
-allowed-tools: Bash(python scripts/pt_baseline.py *) Bash(python scripts/pt_eval.py *) Bash(cat *) Bash(ls *) Read
+description: Run or plan the immutable seed baseline
+argument-hint: "dry|real"
+allowed-tools: Bash(python -m boldt_posttrain.cli baseline run *) Read
 disable-model-invocation: true
 ---
-# PostTrain AutoResearch — baseline
-
-Parse `$ARGUMENTS`: mode is `dry` by default; `real` only if explicitly present. Use `MODE_FLAG=--dry-run` for dry mode and `MODE_FLAG=--real` for real mode when running shell examples.
-
-Seed model is read from `configs/posttrain/current.json`.
-
-Run:
+Invoke exactly one mode. Real execution:
 
 ```bash
-python scripts/pt_baseline.py \
-  --config configs/posttrain/current.json \
-  --out outputs/posttrain/baseline \
-  "$MODE_FLAG"
+python -m boldt_posttrain.cli baseline run --real --allow-gpu --config configs/posttrain/current.json
 ```
 
-If `pt_baseline.py` is not implemented but `pt_eval.py` is, evaluate the seed model directly:
-
-```bash
-python scripts/pt_eval.py \
-  --config configs/posttrain/current.json \
-  --model mayflowergmbh/boldt-dc-1b-german-it-16k-dpo \
-  --label baseline-seed \
-  --out outputs/posttrain/baseline \
-  "$MODE_FLAG"
-```
-
-Report the artifact paths and explicitly mark dry-run outputs as plumbing only.
+For a plan replace the execution flags with `--dry-run`.

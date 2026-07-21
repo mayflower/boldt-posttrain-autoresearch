@@ -1,85 +1,125 @@
-"""Fail-closed behaviour of the protected scorer (pure stdlib unittest)."""
-import copy
-import pathlib
-import sys
-import unittest
+import json
+from pathlib import Path
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+import pytest
 
-from boldt_posttrain import scoring  # noqa: E402
-
-
-def _baseline():
-    return {
-        "status": "ok", "mode": "real",
-        "metrics": {
-            "german_instruction": 0.75, "format_following": 0.90, "reasoning_core": 0.60,
-            "english_bleed_rate": 0.01, "empty_output_rate": 0.00, "refusal_rate": 0.10,
-            "over_refusal_rate": 0.02, "safety": 0.95,
-            "lm_eval": {"arc_de": 0.50, "hellaswag_de": 0.60},
-            "leakage": {"status": "clean", "hits": 0},
-            "license": {"status": "apache-2.0", "usable": True},
-        },
-    }
+from boldt_posttrain.scoring import (
+    ScoringError,
+    create_score,
+    load_candidate_score,
+    verify_evaluation,
+)
+from tests.artifact_chain import complete_chain
 
 
-def _improved():
-    run = copy.deepcopy(_baseline())
-    run["metrics"]["german_instruction"] = 0.80  # +0.05 headline improvement
-    return run
+def test_complete_real_artifact_chain_scores_and_recomputes(tmp_path: Path, monkeypatch):
+    chain = complete_chain(tmp_path, monkeypatch)
+    result = create_score(
+        chain["candidate_eval_run_id"],
+        policy=chain["policy"],
+        outputs_root=chain["outputs"],
+        repository_root=chain["repository"],
+    )
+    assert result["status"] == "passed"
+    assert result["score"] > 0
+    artifact, card = load_candidate_score(
+        chain["candidate_run_id"],
+        chain["policy"],
+        outputs_root=chain["outputs"],
+        repository_root=chain["repository"],
+    )
+    assert artifact["gates"]["positive_score"] is True
+    assert card["status"] == "succeeded"
+    assert artifact["statistics"]["german_instruction"]["n"] == 60
 
 
-class TestScoring(unittest.TestCase):
-    def test_real_improvement_passes(self):
-        res = scoring.score_run(_improved(), _baseline())
-        self.assertEqual(res["status"], "pass", res["failed_gates"])
-        self.assertGreater(res["score"], 0)
-
-    def test_dry_run_never_passes(self):
-        run = _improved()
-        run["mode"] = "dry_run"
-        run["scale_disclaimer"] = "plumbing"
-        res = scoring.score_run(run, _baseline())
-        self.assertEqual(res["status"], "fail")
-        self.assertIn("not_a_real_run", [g["name"] for g in res["failed_gates"]])
-
-    def test_unverified_leakage_fails_closed(self):
-        run = _improved()
-        run["metrics"]["leakage"] = {"status": "not_checked", "hits": None}
-        res = scoring.score_run(run, _baseline())
-        self.assertIn("leakage", [g["name"] for g in res["failed_gates"]])
-
-    def test_unknown_license_fails_closed(self):
-        run = _improved()
-        run["metrics"]["license"] = {"status": "unknown", "usable": False}
-        res = scoring.score_run(run, _baseline())
-        self.assertIn("license", [g["name"] for g in res["failed_gates"]])
-
-    def test_lm_eval_regression_fails(self):
-        run = _improved()
-        run["metrics"]["lm_eval"]["arc_de"] = 0.40  # -0.10 regression vs baseline 0.50
-        res = scoring.score_run(run, _baseline())
-        self.assertIn("lm_eval_regression", [g["name"] for g in res["failed_gates"]])
-
-    def test_missing_lm_eval_task_fails_closed(self):
-        run = _improved()
-        del run["metrics"]["lm_eval"]["arc_de"]  # baseline has it, run does not
-        res = scoring.score_run(run, _baseline())
-        self.assertIn("lm_eval_present", [g["name"] for g in res["failed_gates"]])
-
-    def test_english_bleed_over_threshold_fails(self):
-        run = _improved()
-        run["metrics"]["english_bleed_rate"] = 0.20
-        res = scoring.score_run(run, _baseline())
-        self.assertIn("english_bleed", [g["name"] for g in res["failed_gates"]])
-
-    def test_incomplete_baseline_fails(self):
-        base = _baseline()
-        base["metrics"]["german_instruction"] = 0.0  # not a real measured baseline
-        res = scoring.score_run(_improved(), base)
-        self.assertIn("baseline_incomplete", [g["name"] for g in res["failed_gates"]])
+def test_missing_or_nonreal_mode_fails_scoring(tmp_path: Path, monkeypatch):
+    chain = complete_chain(tmp_path, monkeypatch)
+    path = chain["outputs"] / "evals" / chain["candidate_eval_run_id"] / "summary.json"
+    summary = json.loads(path.read_text())
+    summary.pop("mode")
+    path.write_text(json.dumps(summary))
+    with pytest.raises(ScoringError):
+        create_score(
+            chain["candidate_eval_run_id"],
+            policy=chain["policy"],
+            outputs_root=chain["outputs"],
+            repository_root=chain["repository"],
+        )
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_every_policy_metric_is_required(tmp_path: Path, monkeypatch):
+    chain = complete_chain(tmp_path, monkeypatch)
+    path = chain["outputs"] / "evals" / chain["candidate_eval_run_id"] / "summary.json"
+    summary = json.loads(path.read_text())
+    del summary["metrics"]["safety"]
+    path.write_text(json.dumps(summary))
+    with pytest.raises(ScoringError):
+        verify_evaluation(
+            path.parent,
+            chain["policy"],
+            outputs_root=chain["outputs"],
+            baseline=False,
+            repository_root=chain["repository"],
+        )
+
+
+def test_nonfinite_metric_fails(tmp_path: Path, monkeypatch):
+    chain = complete_chain(tmp_path, monkeypatch)
+    path = chain["outputs"] / "evals" / chain["candidate_eval_run_id"] / "summary.json"
+    summary = json.loads(path.read_text())
+    summary["metrics"]["safety"] = float("nan")
+    path.write_text(json.dumps(summary))
+    with pytest.raises(ScoringError, match="non-finite"):
+        verify_evaluation(
+            path.parent,
+            chain["policy"],
+            outputs_root=chain["outputs"],
+            baseline=False,
+            repository_root=chain["repository"],
+        )
+
+
+def test_negative_score_cannot_pass(tmp_path: Path, monkeypatch):
+    chain = complete_chain(tmp_path, monkeypatch, improvement=-0.1)
+    result = create_score(
+        chain["candidate_eval_run_id"],
+        policy=chain["policy"],
+        outputs_root=chain["outputs"],
+        repository_root=chain["repository"],
+    )
+    assert result["status"] == "rejected"
+    assert result["score"] < 0
+
+
+def test_checkpoint_mutation_invalidates_stored_score(tmp_path: Path, monkeypatch):
+    chain = complete_chain(tmp_path, monkeypatch)
+    create_score(
+        chain["candidate_eval_run_id"],
+        policy=chain["policy"],
+        outputs_root=chain["outputs"],
+        repository_root=chain["repository"],
+    )
+    checkpoint = chain["outputs"] / "checkpoints" / chain["candidate_run_id"]
+    (checkpoint / "adapter_model.safetensors").write_bytes(b"manipulated")
+    with pytest.raises(Exception, match="verification|hash|candidate"):
+        load_candidate_score(
+            chain["candidate_run_id"],
+            chain["policy"],
+            outputs_root=chain["outputs"],
+            repository_root=chain["repository"],
+        )
+
+
+def test_free_summary_is_not_a_scoreable_chain(tmp_path: Path, monkeypatch):
+    chain = complete_chain(tmp_path, monkeypatch)
+    fake = chain["outputs"] / "evals/fake"
+    fake.mkdir()
+    (fake / "summary.json").write_text(json.dumps({"status": "succeeded", "score": 100}))
+    with pytest.raises(ScoringError):
+        create_score(
+            "fake",
+            policy=chain["policy"],
+            outputs_root=chain["outputs"],
+            repository_root=chain["repository"],
+        )

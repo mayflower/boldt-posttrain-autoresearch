@@ -17,7 +17,7 @@ venv/
 .wandb
 wandb/
 
-# Model weights, adapters & large binary artifacts (never commit)
+# Model weights, adapters & runtime artifacts (never commit)
 *.bin
 *.safetensors
 *.pt
@@ -26,31 +26,12 @@ wandb/
 *.onnx
 *.gguf
 adapter_model.*
-outputs/posttrain/checkpoints/
+outputs/posttrain/
 
 # Hugging Face / datasets caches
 .cache/
 hf_cache/
 data/raw/
 data/cache/
-
-# Prepared training shards are large local working files, regenerable from the
-# manifest + leakage scan. The small reports (manifest.json, leakage_report.json,
-# quality_report.json, discovery.json) under outputs/posttrain/data/ ARE tracked.
-outputs/posttrain/data/*.jsonl
-outputs/posttrain/data/**/*.jsonl
-
-# AutoResearch loop: heavy run/merge/eval directories are generated, never committed.
-# The audit log (results.tsv), frontier.json, committed baselines under
-# outputs/posttrain/baseline/, and the small *.json / *.md / run_card.json / summary.json
-# sidecars under runs|evals|merge ARE tracked.
-outputs/posttrain/runs/**/*.jsonl
-outputs/posttrain/runs/**/*.log
-outputs/posttrain/merge/**/*.jsonl
-outputs/posttrain/evals/**/*.jsonl
-outputs/posttrain/**/*.npy
-outputs/posttrain/**/*.parquet
-outputs/posttrain/**/*.arrow
-outputs/posttrain/**/*.log
 
 .DS_Store

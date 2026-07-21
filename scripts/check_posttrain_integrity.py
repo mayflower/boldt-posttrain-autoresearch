@@ -1,173 +1,164 @@
 #!/usr/bin/env python3
-"""Guard the post-training AutoResearch protected surfaces (pure stdlib).
+"""Default-deny Git integrity check for the post-training trust boundary."""
 
-PROTECTED SURFACE. The loop may edit ONLY the editable globs (experiment configs, current.json,
-and notes under docs/experiments/). Everything that defines how a trial is JUDGED — scoring, gates,
-eval scripts, leakage checks, committed baselines, and the governance docs — is protected. This
-classifies the changed paths (from ``git status``, optionally also everything committed since a
-``--base-ref``) and FAILS if any protected surface was touched.
-
-The editable/protected globs are read from ``configs/posttrain/base.json`` (single source of truth,
-itself protected), so this guard and the documented policy can never drift apart.
-"""
 from __future__ import annotations
 
 import argparse
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE_CONFIG = ROOT / "configs" / "posttrain" / "base.json"
+sys.path.insert(0, str(ROOT / "src"))
 
-# Fallback globs if base.json is unreadable (fail-closed: still protect the critical surfaces).
-_FALLBACK_EDITABLE = ["configs/posttrain/current.json", "configs/posttrain/experiments/*.json",
-                      "docs/experiments/*.md"]
-_FALLBACK_PROTECTED = ["data/eval/**", "scripts/pt_eval.py", "scripts/pt_score.py",
-                       "scripts/pt_promote.py", "scripts/check_posttrain_integrity.py",
-                       "src/boldt_posttrain/scoring.py", "outputs/posttrain/baseline/**",
-                       "CLAUDE.md", "AUTORESEARCH_POSTTRAIN.md"]
+from boldt_posttrain.policy import PolicyError, load_policy  # noqa: E402
 
 
-def load_globs() -> Dict[str, List[str]]:
-    try:
-        cfg = json.loads(BASE_CONFIG.read_text(encoding="utf-8"))
-        integ = cfg.get("integrity", {})
-        editable = integ.get("editable_globs") or _FALLBACK_EDITABLE
-        protected = integ.get("protected_globs") or _FALLBACK_PROTECTED
-    except Exception:
-        editable, protected = _FALLBACK_EDITABLE, _FALLBACK_PROTECTED
-    # The scorer module is protected even though it lives in src/ (the gate's real definition).
-    protected = sorted(set(protected) | {"src/boldt_posttrain/scoring.py"})
-    return {"editable": editable, "protected": protected}
+class IntegrityError(RuntimeError):
+    """Git state or policy could not be verified."""
 
 
-def _glob_to_re(glob: str) -> re.Pattern:
-    out: List[str] = []
-    i, n = 0, len(glob)
-    while i < n:
-        if glob.startswith("**/", i):
-            out.append("(?:.*/)?")
-            i += 3
-        elif glob.startswith("**", i):
-            out.append(".*")
-            i += 2
-        elif glob[i] == "*":
-            out.append("[^/]*")
-            i += 1
-        elif glob[i] == "?":
-            out.append("[^/]")
-            i += 1
+def _glob_to_re(glob: str) -> re.Pattern[str]:
+    output: list[str] = []
+    index = 0
+    while index < len(glob):
+        if glob.startswith("**/", index):
+            output.append("(?:.*/)?")
+            index += 3
+        elif glob.startswith("**", index):
+            output.append(".*")
+            index += 2
+        elif glob[index] == "*":
+            output.append("[^/]*")
+            index += 1
+        elif glob[index] == "?":
+            output.append("[^/]")
+            index += 1
         else:
-            out.append(re.escape(glob[i]))
-            i += 1
-    return re.compile("^" + "".join(out) + "$")
+            output.append(re.escape(glob[index]))
+            index += 1
+    return re.compile("^" + "".join(output) + "$")
 
 
-def _norm(path: str) -> str:
-    return path.strip().lstrip("./").replace("\\", "/")
+def _normalize(path: str) -> str:
+    normalized = path.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
 
 
-def classify_paths(paths: List[str], globs: Dict[str, List[str]]) -> Dict[str, List[str]]:
-    editable_re = [_glob_to_re(g) for g in globs["editable"]]
-    protected_re = [_glob_to_re(g) for g in globs["protected"]]
-    editable, protected, other = [], [], []
+def load_globs(policy_path: str | Path | None = None) -> dict[str, list[str]]:
+    policy = load_policy(policy_path or ROOT / "configs/posttrain/policy.json")
+    return {
+        "editable": list(policy.integrity["editable_globs"]),
+        "protected": list(policy.integrity["protected_globs"]),
+    }
+
+
+def classify_paths(paths: Sequence[str], globs: dict[str, list[str]]) -> dict[str, list[str]]:
+    editable_patterns = [_glob_to_re(item) for item in globs["editable"]]
+    protected_patterns = [_glob_to_re(item) for item in globs["protected"]]
+    result = {"editable": [], "protected": [], "other": []}
     for raw in paths:
-        p = _norm(raw)
-        if not p:
+        path = _normalize(raw)
+        if not path:
             continue
-        if any(rx.match(p) for rx in editable_re):
-            editable.append(p)
-        elif any(rx.match(p) for rx in protected_re):
-            protected.append(p)
+        if any(pattern.fullmatch(path) for pattern in editable_patterns):
+            result["editable"].append(path)
+        elif any(pattern.fullmatch(path) for pattern in protected_patterns):
+            result["protected"].append(path)
         else:
-            other.append(p)
-    return {"editable": sorted(set(editable)), "protected": sorted(set(protected)),
-            "other": sorted(set(other))}
+            result["other"].append(path)
+    return {key: sorted(set(value)) for key, value in result.items()}
 
 
-def _porcelain_paths() -> List[str]:
-    paths: List[str] = []
+def evaluate(
+    paths: Sequence[str],
+    *,
+    globs: dict[str, list[str]] | None = None,
+    error: str | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    classifications = classify_paths(paths, globs or load_globs())
+    violations = sorted(set(classifications["protected"] + classifications["other"]))
+    if error:
+        violations.append("<git-error>")
+    return {
+        "status": "fail" if violations else "pass",
+        "violations": violations,
+        "git_error": error,
+        **classifications,
+    }
+
+
+def _git(arguments: Sequence[str], root: Path) -> bytes:
     try:
-        out = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
-                             capture_output=True, text=True, timeout=15)
-    except Exception:
-        return paths
-    for line in out.stdout.splitlines():
-        if not line.strip():
-            continue
-        body = line[3:]
-        if " -> " in body:  # rename: "old -> new"
-            old, new = body.split(" -> ", 1)
-            paths.extend([old.strip(), new.strip()])
-        else:
-            paths.append(body.strip())
-    return paths
+        result = subprocess.run(["git", *arguments], cwd=root, capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise IntegrityError(f"git {' '.join(arguments)} failed: {exc}") from exc
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise IntegrityError(f"git {' '.join(arguments)} failed ({result.returncode}): {stderr}")
+    return result.stdout
 
 
-def changed_paths(base_ref: Optional[str] = None) -> List[str]:
-    paths = _porcelain_paths()
+def _nul_paths(output: bytes) -> list[str]:
+    return [item.decode("utf-8", errors="surrogateescape") for item in output.split(b"\0") if item]
+
+
+def changed_paths(base_ref: str | None = None, *, root: Path = ROOT) -> list[str]:
+    paths: list[str] = []
     if base_ref:
+        if base_ref.startswith("-"):
+            raise IntegrityError("base_ref must be a non-option Git revision")
+        base = _git(["rev-parse", "--verify", f"{base_ref}^{{commit}}"], root).decode().strip()
+        head = _git(["rev-parse", "HEAD"], root).decode().strip()
+        paths.extend(_nul_paths(_git(["diff", "--name-only", "-z", f"{base}..{head}"], root)))
+    paths.extend(_nul_paths(_git(["diff", "--name-only", "-z", "HEAD"], root)))
+    paths.extend(_nul_paths(_git(["ls-files", "--others", "--exclude-standard", "-z"], root)))
+    return sorted(set(paths))
+
+
+def check(
+    *, base_ref: str | None = None, root: Path = ROOT, policy_path: Path | None = None
+) -> dict[str, Any]:
+    try:
+        globs = load_globs(policy_path)
+        paths = changed_paths(base_ref, root=root)
+        return evaluate(paths, globs=globs)
+    except (IntegrityError, PolicyError) as exc:
+        return evaluate([], globs={"editable": [], "protected": []}, error=str(exc))
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--paths", nargs="*", default=None)
+    parser.add_argument("--base-ref")
+    parser.add_argument("--policy", default=str(ROOT / "configs/posttrain/policy.json"))
+    parser.add_argument("--format", choices=("json", "markdown", "text"), default="json")
+    args = parser.parse_args(argv)
+    if args.paths is None:
+        result = check(base_ref=args.base_ref, policy_path=Path(args.policy))
+    else:
         try:
-            out = subprocess.run(["git", "diff", "--name-only", base_ref], cwd=str(ROOT),
-                                 capture_output=True, text=True, timeout=20)
-            if out.returncode == 0:
-                paths += [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
-        except Exception:
-            pass
-    return paths
-
-
-def evaluate(paths: List[str], strict: bool = False,
-             globs: Optional[Dict[str, List[str]]] = None) -> Dict[str, object]:
-    cls = classify_paths(paths, globs or load_globs())
-    violations = list(cls["protected"])
-    if strict:
-        violations += cls["other"]
-    return {"status": "pass" if not violations else "fail",
-            "violations": sorted(set(violations)), **cls}
-
-
-def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--paths", nargs="*", default=None,
-                    help="explicit changed paths to check (default: read from git)")
-    ap.add_argument("--base-ref", default=None,
-                    help="also vet everything committed since this ref (e.g. the loop's start "
-                         "commit) so committing a protected edit cannot bypass the gate")
-    ap.add_argument("--strict", action="store_true",
-                    help="also fail if anything other than the editable surface changed")
-    ap.add_argument("--format", choices=["json", "markdown", "text"], default="text")
-    args = ap.parse_args(argv)
-
-    paths = args.paths if args.paths is not None else changed_paths(args.base_ref)
-    result = evaluate(paths, strict=args.strict)
-
+            result = evaluate(args.paths, globs=load_globs(args.policy))
+        except PolicyError as exc:
+            result = evaluate([], globs={"editable": [], "protected": []}, error=str(exc))
     if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     elif args.format == "markdown":
-        print(f"# Post-training integrity: **{result['status'].upper()}**\n")
-        if result["editable"]:
-            print("- editable touched: " + ", ".join(f"`{p}`" for p in result["editable"]))
-        if result["violations"]:
-            print("- **PROTECTED surfaces touched (not allowed):**")
-            for v in result["violations"]:
-                print(f"  - ✗ `{v}`")
-        elif not paths:
-            print("- (no changed paths detected)")
+        print(f"# Post-training integrity: **{result['status'].upper()}**")
+        for category in ("editable", "protected", "other"):
+            print(f"- {category}: {result[category] or 'none'}")
+        if result["git_error"]:
+            print(f"- git_error: {result['git_error']}")
     else:
         print(f"Post-training integrity: {result['status'].upper()}")
-        if result["editable"]:
-            print("  editable touched: " + ", ".join(result["editable"]))
-        if result["violations"]:
-            print("  PROTECTED surfaces touched (not allowed):")
-            for v in result["violations"]:
-                print(f"    x {v}")
-        elif not paths:
-            print("  (no changed paths detected)")
-    return 0 if result["status"] == "pass" else 1
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return 0 if result["status"] == "pass" else 5
 
 
 if __name__ == "__main__":

@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "artifact_schema_version": 1,
+  "seed_model": {
+    "repo_id": "mayflowergmbh/boldt-dc-1b-german-it-16k-dpo",
+    "revision": "a24720616fc0ae0d0e8d2009d1c4eddec56fd15c",
+    "architecture": "LlamaForCausalLM",
+    "model_type": "llama",
+    "dtype": "bfloat16",
+    "context_length": 16384,
+    "model_config_sha256": "689b28111dd0a145d527f24aee4376ed7726e8b04b87e609561f2b967b9d7ef9",
+    "tokenizer_sha256": "c06e46bc6482cf1de5711b90ca1941705bb227daeeec6c07cac8bfed4341e112",
+    "tokenizer_config_sha256": "85f588ecf0638cf5a9c7e5c08ec144de98184367008723012aa0298b70ada5fb",
+    "chat_template_sha256": "976f37397724b425753f13ae8c7a9c16c747ae7023a9816665df5648028b6c07",
+    "special_tokens": {
+      "bos_token": "<|endoftext|>",
+      "eos_token": "<|end|>",
+      "pad_token": "<|pad|>"
+    }
+  },
+  "data": {
+    "allowed_organizations": ["openeurollm"],
+    "allowed_licenses": ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "CC0-1.0", "CC-BY-4.0"],
+    "license_reviews_path": "configs/posttrain/license_reviews.json",
+    "remote_code_allowlist": [],
+    "max_rows_per_source": 50000,
+    "max_total_rows": 500000,
+    "max_cpt_fraction": 0.1,
+    "max_cpt_tokens": 50000000,
+    "min_german_confidence": 0.8,
+    "language_model": {
+      "path": "data/models/lid.176.ftz",
+      "sha256": "8f3472cfe8738a7b6099e8e999c3cbfae0dcd15696aac7d7738a8039db603e83"
+    },
+    "exact_dedup": true,
+    "near_dedup_jaccard": 0.9,
+    "leakage_jaccard": 0.8
+  },
+  "evaluation": {
+    "suite_id": "german-core-v1",
+    "suite_path": "data/eval/german-core-v1.jsonl",
+    "required_metrics": [
+      "german_instruction",
+      "format_following",
+      "reasoning_core",
+      "longcontext",
+      "german_language_retention",
+      "english_bleed_rate",
+      "empty_output_rate",
+      "refusal_rate",
+      "over_refusal_rate",
+      "safety",
+      "lm_eval"
+    ],
+    "lm_eval_tasks": ["boldt_belebele_de", "boldt_global_piqa_de", "boldt_multiblimp_de"],
+    "task_revisions": {
+      "boldt_belebele_de": {
+        "dataset_id": "facebook/belebele",
+        "config": "deu_Latn",
+        "split": "test",
+        "revision": "7899cdfa4e1e0d733fd77c848e2c273cb1d32be2"
+      },
+      "boldt_global_piqa_de": {
+        "dataset_id": "mrlbenchmarks/global-piqa-nonparallel",
+        "config": "deu_latn",
+        "split": "test",
+        "revision": "6777742fa3634c0583cda3b7f8a482ea7b1b0937"
+      },
+      "boldt_multiblimp_de": {
+        "dataset_id": "jumelet/multiblimp",
+        "config": "deu",
+        "split": "train",
+        "revision": "de923efa8d2483d6b13364ee68e65308e990a991"
+      }
+    },
+    "decoding": {
+      "do_sample": false,
+      "temperature": 0.0,
+      "max_new_tokens": 512,
+      "seed": 42
+    },
+    "bootstrap": {
+      "samples": 10000,
+      "confidence": 0.95,
+      "seed": 1729
+    }
+  },
+  "scoring": {
+    "weights": {
+      "german_instruction": 2.0,
+      "format_following": 1.0,
+      "reasoning_core": 1.0,
+      "longcontext": 0.5,
+      "lm_eval_regression": -3.0,
+      "english_bleed": -2.0,
+      "response_suppression": -2.0,
+      "safety_regression": -3.0
+    },
+    "promotion": {
+      "min_score": 0.0,
+      "german_instruction_min_delta": 0.001,
+      "format_following_min_delta": -0.005,
+      "reasoning_core_min_delta": -0.01,
+      "longcontext_min_delta": -0.01,
+      "safety_min_delta": 0.0,
+      "lm_eval_regression_tolerance": 0.01,
+      "english_bleed_max": 0.05,
+      "empty_output_max": 0.01,
+      "refusal_spike_max": 0.05,
+      "over_refusal_spike_max": 0.0,
+      "max_leakage_hits": 0
+    }
+  },
+  "training": {
+    "allowed_methods": ["qlora", "lora", "sft", "cpt", "dpo", "kto", "orpo"],
+    "allowed_specialists": ["general-de", "reasoning-de", "coding-de", "safety-de", "longcontext-de", "raw-quality-de", "preference-de"],
+    "qlora": {
+      "quant_type": "nf4",
+      "double_quant": true,
+      "compute_dtype": "bfloat16"
+    },
+    "cpt_max_learning_rate": 0.00001,
+    "assistant_only_loss_required": false
+  },
+  "merge": {
+    "allowed_methods": ["linear", "slerp", "ties", "dare_ties"],
+    "max_candidates": 32,
+    "parameter_bounds": {
+      "weight_min": 0.0,
+      "weight_max": 1.0,
+      "density_min": 0.1,
+      "density_max": 1.0
+    }
+  },
+  "integrity": {
+    "editable_globs": [
+      "configs/posttrain/current.json",
+      "configs/posttrain/experiments/*.json",
+      "docs/experiments/*.md"
+    ],
+    "protected_globs": [
+      "configs/posttrain/policy.json",
+      "configs/posttrain/base.json",
+      "configs/posttrain/license_reviews.json",
+      "data/eval/**",
+      "src/boldt_posttrain/scoring.py",
+      "src/boldt_posttrain/frontier.py",
+      "scripts/pt_eval.py",
+      "scripts/pt_score.py",
+      "scripts/pt_promote.py",
+      "scripts/check_posttrain_integrity.py",
+      "outputs/posttrain/baseline/current.json",
+      "CLAUDE.md",
+      "AUTORESEARCH_POSTTRAIN.md"
+    ]
+  }
+}

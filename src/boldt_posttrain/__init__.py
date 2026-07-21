@@ -7,5 +7,5 @@ is imported lazily inside ``--real`` code paths only; importing this package pul
 beyond the standard library.
 """
 
-__all__ = ["config", "provenance", "scoring", "recipe", "frontier"]
+__all__ = ["artifacts", "config", "policy", "provenance"]
 __version__ = "0.1.0"

@@ -1,40 +1,40 @@
-"""Config inheritance + validation (pure stdlib unittest)."""
-import pathlib
-import sys
-import unittest
+import json
+from pathlib import Path
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+import pytest
 
-from boldt_posttrain import config as cfgmod  # noqa: E402
+from boldt_posttrain import config
 
 
-class TestConfig(unittest.TestCase):
-    def test_current_extends_base(self):
-        cfg = cfgmod.resolve_config(cfgmod.DEFAULT_CONFIG)
-        # current.json declares extends -> base.json keys must be present after the merge.
-        self.assertEqual(cfg.get("_extends"), "configs/posttrain/base.json")
-        self.assertIn("paths", cfg)        # from base.json
-        self.assertIn("integrity", cfg)    # from base.json
-        self.assertIn("training", cfg)     # from current.json
-
-    def test_resolved_current_is_valid(self):
-        cfg = cfgmod.resolve_config(cfgmod.DEFAULT_CONFIG)
-        self.assertEqual(cfgmod.validate_config_dict(cfg), [])
-
-    def test_deep_merge_overrides_nested(self):
-        base = {"training": {"lr": 1, "method": "qlora"}, "x": 1}
-        overlay = {"training": {"lr": 2}, "y": 2}
-        merged = cfgmod.deep_merge(base, overlay)
-        self.assertEqual(merged["training"], {"lr": 2, "method": "qlora"})
-        self.assertEqual(merged["x"], 1)
-        self.assertEqual(merged["y"], 2)
-
-    def test_validation_flags_missing_blocks(self):
-        errors = cfgmod.validate_config_dict({"training": {}})
-        self.assertTrue(any("base_model" in e for e in errors))
-        self.assertTrue(any("data" in e for e in errors))
+def test_current_is_strict_and_valid():
+    loaded = config.load_experiment()
+    assert loaded.document["experiment"]["name"] == "current"
+    assert "base_model" not in loaded.document["training"]
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("key", ["threshold", "promotion", "base_model_revision", "eval_task"])
+def test_experiment_cannot_override_policy_thresholds(tmp_path: Path, key: str):
+    document = json.loads(config.DEFAULT_CONFIG.read_text())
+    document[key] = {}
+    path = tmp_path / "attack.json"
+    path.write_text(json.dumps(document))
+    with pytest.raises(config.ConfigError, match="protected policy key"):
+        config.load_experiment(path)
+
+
+def test_unknown_key_is_rejected(tmp_path: Path):
+    document = json.loads(config.DEFAULT_CONFIG.read_text())
+    document["training"]["surprise"] = True
+    path = tmp_path / "unknown.json"
+    path.write_text(json.dumps(document))
+    with pytest.raises(config.ConfigError, match="unknown key"):
+        config.load_experiment(path)
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_nonfinite_numbers_are_rejected(tmp_path: Path, constant: str):
+    text = config.DEFAULT_CONFIG.read_text().replace("0.00001", constant, 1)
+    path = tmp_path / "nonfinite.json"
+    path.write_text(text)
+    with pytest.raises(config.ConfigError, match="non-finite"):
+        config.load_experiment(path)

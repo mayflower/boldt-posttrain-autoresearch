@@ -1,31 +1,13 @@
 ---
-description: Evaluate a seed, specialist, or merged candidate with the German-core suite
-argument-hint: "[dry|real] <model-or-candidate-label>"
-allowed-tools: Bash(python scripts/pt_eval.py *) Bash(python scripts/pt_score.py *) Bash(cat *) Bash(find *) Read
+description: Evaluate one exact model or candidate run
+argument-hint: "dry|real <exact-run-id>"
+allowed-tools: Bash(python -m boldt_posttrain.cli eval run *) Read
 disable-model-invocation: true
 ---
-# PostTrain AutoResearch — eval
-
-Parse `$ARGUMENTS`: mode default `dry`; candidate/model is the remaining argument, default `latest`. Set `MODE_FLAG=--dry-run` or `MODE_FLAG=--real`, and `CANDIDATE` to the parsed model/label.
-
-Run:
+Candidate identifiers are exact run IDs; there is no latest alias.
 
 ```bash
-python scripts/pt_eval.py \
-  --config configs/posttrain/current.json \
-  --candidate "$CANDIDATE" \
-  --out outputs/posttrain/evals \
-  "$MODE_FLAG"
+python -m boldt_posttrain.cli eval run --real --allow-gpu --candidate "$CANDIDATE"
 ```
 
-Then score if possible:
-
-```bash
-python scripts/pt_score.py \
-  --config configs/posttrain/current.json \
-  --candidate "$CANDIDATE" \
-  --out outputs/posttrain/score-latest.json \
-  "$MODE_FLAG" || true
-```
-
-Report exact artifact paths and gate implications. Do not promote here.
+For a plan use `--dry-run`. Emit JSON unchanged and stop on nonzero exit.

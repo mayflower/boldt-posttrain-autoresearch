@@ -1,57 +1,70 @@
 {
-  "extends": "configs/posttrain/base.json",
+  "schema_version": 1,
   "experiment": {
     "name": "current",
-    "hypothesis": "Start with dry-run data discovery and baseline evaluation before training."
+    "hypothesis": "Establish verified German data and a reproducible baseline before training.",
+    "lever": "data"
   },
   "data": {
-    "org": "openeurollm",
-    "language_allowlist": ["de", "deu", "de-DE", "German", "Deutsch"],
-    "schemas": ["sft", "preference", "cpt"],
-    "max_rows_per_source_dry": 200,
-    "max_rows_per_source_real": 50000,
-    "min_german_confidence": 0.80,
-    "require_license_review": true,
-    "require_leakage_clean": true
+    "sources": [],
+    "max_rows": 50000
   },
   "training": {
-    "base_model": "mayflowergmbh/boldt-dc-1b-german-it-16k-dpo",
-    "context_length": 16384,
     "specialist": "general-de",
     "method": "qlora",
     "learning_rate": 0.00001,
-    "num_train_epochs": 1,
+    "num_train_epochs": 1.0,
     "max_steps": 1000,
     "warmup_ratio": 0.03,
+    "per_device_batch_size": 1,
+    "gradient_accumulation_steps": 16,
+    "context_length": 16384,
     "lora_r": 32,
     "lora_alpha": 64,
     "lora_dropout": 0.05,
-    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    "bf16": true,
+    "target_modules": [
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj",
+      "gate_proj",
+      "up_proj",
+      "down_proj"
+    ],
+    "seed": 42,
     "packing": true,
-    "gradient_checkpointing": true
+    "gradient_checkpointing": true,
+    "assistant_only_loss": false,
+    "quantization": "nf4"
   },
   "preference": {
     "enabled": false,
+    "method": "dpo",
     "loss_type": "sigmoid",
     "beta": 0.1,
     "rpo_alpha": 0.5,
-    "length_ratio_max": 3.0
+    "length_ratio_max": 3.0,
+    "max_prompt_length": 4096,
+    "max_completion_length": 2048
+  },
+  "distillation": {
+    "teacher": "mayflowergmbh/boldt-dc-1b-german-it-16k-dpo@a24720616fc0ae0d0e8d2009d1c4eddec56fd15c",
+    "teacher_license": "Apache-2.0",
+    "max_prompts": 10000,
+    "min_new_tokens": 16,
+    "max_new_tokens": 512
   },
   "merge": {
     "enabled": true,
+    "inputs": [],
     "methods": ["linear", "slerp", "ties", "dare_ties"],
-    "base_model": "mayflowergmbh/boldt-dc-1b-german-it-16k-dpo",
-    "tokenizer_source": "union",
+    "parameters": {},
     "dtype": "bfloat16"
   },
-  "eval": {
-    "suite": "german-core",
-    "decode_temperature": 0.0,
-    "max_new_tokens": 512,
-    "lm_eval_tasks": ["arc_de", "hellaswag_de", "m_mmlu_de", "truthfulqa_de_mc2", "belebele_deu_Latn"],
-    "regression_tolerance_abs": 0.01,
-    "english_bleed_max": 0.05,
-    "empty_output_max": 0.01
+  "evaluation": {
+    "batch_size": 1
+  },
+  "resources": {
+    "budget_minutes": 90
   }
 }

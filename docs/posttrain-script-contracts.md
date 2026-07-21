@@ -1,151 +1,28 @@
-# Post-Training Script Contracts
+# Post-Training CLI Contracts
 
-The `.claude` commands call scripts by contract. Implement them in your repo or adapt command names to your existing trainer.
+All `scripts/pt_*.py` files are thin compatibility entrypoints for
+`python -m boldt_posttrain.cli`. Fachlogik exists only in `src/boldt_posttrain/`.
 
-Each script must write machine-readable JSON and never fabricate metrics. If prerequisites are missing, return a clear failure JSON.
+Every CLI emits exactly one JSON object on stdout, detailed logs on stderr, and one of exit codes
+0–5 documented in `README.md`. Subprocesses use argument arrays without a shell. Mutating commands
+require exactly one explicit mode; dry plans cannot write any real namespace.
 
-## Common flags
-
-All scripts should support:
-
-```bash
---config configs/posttrain/current.json
---out outputs/posttrain/<area>
---format json|markdown
---dry-run
---real
---allow-gpu
-```
-
-Real training scripts should also support budget/deadline flags:
+## Commands
 
 ```bash
---budget-minutes <int>
---allow-checkpoints
+python -m boldt_posttrain.cli policy validate
+python -m boldt_posttrain.cli integrity check --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247
+python -m boldt_posttrain.cli model resolve --candidate train-sft-20260721T120000.000000Z-0123456789abcdef
+python -m boldt_posttrain.cli eval validate-suite
+python -m boldt_posttrain.cli eval catalog
+python -m boldt_posttrain.cli status
+python -m boldt_posttrain.cli report
 ```
 
-## scripts/pt_discover_openeurollm_de.py
+Data runs publish immutable discovery or prepared-data directories. Training publishes a verified
+PEFT adapter only after save/reload/forward validation. Evaluation publishes summary, raw
+generations, exact resolved-model JSON, lm-eval output, and a run card. Score and promotion accept
+only those linked artifacts. Merge materializes PEFT inputs and delegates all full-weight merges
+to the pinned Mergekit CLI.
 
-Purpose: inspect Hugging Face org `openeurollm`, dataset configs, split names, schemas, and sample rows. Output candidate German sources.
-
-Required output:
-
-```json
-{
-  "status": "ok|fail",
-  "org": "openeurollm",
-  "candidates": [
-    {
-      "dataset_id": "openeurollm/...",
-      "config": "...",
-      "split": "train",
-      "reason": "language_column|config_name|sample_langid",
-      "schema_guess": "sft|preference|cpt|unknown",
-      "license": "...|unknown",
-      "row_estimate": 0,
-      "training_usable": false
-    }
-  ]
-}
-```
-
-Implementation hint:
-
-- Use `huggingface_hub.HfApi().list_datasets(author="openeurollm")`.
-- Use `datasets.get_dataset_config_names` and `datasets.get_dataset_split_names`.
-- Stream small samples with `load_dataset(..., streaming=True)`.
-- Do not download full datasets during discovery.
-
-## scripts/pt_prepare_openeurollm_de.py
-
-Purpose: materialize trainable German shards only after license/language/leakage checks.
-
-Required artifacts:
-
-- `outputs/posttrain/data/manifest.json`
-- `outputs/posttrain/data/train_sft.jsonl`
-- `outputs/posttrain/data/train_preference.jsonl`
-- `outputs/posttrain/data/train_cpt.jsonl`
-- `outputs/posttrain/data/leakage_report.json`
-- `outputs/posttrain/data/quality_report.json`
-
-## scripts/pt_baseline.py
-
-Purpose: create reproducible baseline eval for seed model.
-
-Required output:
-
-- `outputs/posttrain/baseline/summary.json`
-- `outputs/posttrain/baseline/run_card.json`
-
-## scripts/pt_train_specialist.py
-
-Purpose: train LoRA/QLoRA SFT or CPT specialist.
-
-Required output:
-
-- checkpoint/adapters under `outputs/posttrain/checkpoints/<run_id>/`
-- `outputs/posttrain/runs/<run_id>/run_card.json`
-
-The run card must include: base model, data manifest path/checksum, training args, seed, git commit, hardware, wall clock, trainable parameters, and path to adapter/full checkpoint.
-
-## scripts/pt_train_preference.py
-
-Purpose: DPO/ORPO/KTO-like training on preference rows. It must check chosen/rejected lengths and avoid response suppression.
-
-Required output: same run card contract as `pt_train_specialist.py`, plus preference stats.
-
-## scripts/pt_merge_search.py
-
-Purpose: merge eligible candidates using mergekit or local weight interpolation.
-
-Required inputs:
-
-- eligible checkpoints from `outputs/posttrain/runs/*/run_card.json`
-- merge config from `configs/posttrain/current.json`
-
-Required output:
-
-- `outputs/posttrain/merge/<merge_id>/merge_matrix.json`
-- one run card per merged candidate
-
-## scripts/pt_eval.py
-
-Purpose: evaluate seed, specialist, or merged model.
-
-Required output:
-
-```json
-{
-  "status": "ok|fail",
-  "model": "...",
-  "label": "...",
-  "metrics": {
-    "german_instruction": 0.0,
-    "format_following": 0.0,
-    "reasoning_core": 0.0,
-    "longcontext": 0.0,
-    "english_bleed_rate": 0.0,
-    "empty_output_rate": 0.0,
-    "refusal_rate": 0.0,
-    "lm_eval": {}
-  },
-  "artifacts": {}
-}
-```
-
-## scripts/pt_score.py
-
-Purpose: deterministic scoring against baseline and current frontier. Dry runs can never pass.
-
-## scripts/pt_promote.py
-
-Purpose: promotion gate. It may write `outputs/posttrain/frontier.json` only when all gates pass. It must not move/commit weights.
-
-## scripts/pt_frontier_status.py and scripts/pt_report.py
-
-Purpose: read-only summaries for Claude Code.
-
-## scripts/check_posttrain_integrity.py
-
-Purpose: fail if the loop touched protected surfaces. It should compare against a supplied base ref or current git state.
+Run-card schema v1 fields and artifact roles are defined in `src/boldt_posttrain/artifacts.py`.
