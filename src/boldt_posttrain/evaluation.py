@@ -28,7 +28,7 @@ from .artifacts import (
     validate_run_card,
 )
 from .policy import Policy, load_policy
-from .resolver import OUTPUTS, ResolvedModelRef, resolve_model
+from .resolver import OUTPUTS, ResolvedModelRef, load_tokenizer, resolve_model
 
 ROOT = Path(__file__).resolve().parents[2]
 SUITE_PATH = ROOT / "data/eval/german-core-v1.jsonl"
@@ -122,10 +122,12 @@ def load_suite(path: Path = SUITE_PATH) -> list[dict[str, Any]]:
             or case["max_new_tokens"] <= 0
         ):
             raise EvaluationError(f"invalid prompt or max_new_tokens for {case['case_id']}")
-        if case["category"] == "longcontext" and len(case["prompt"].split()) < 8000:
-            raise EvaluationError(
-                f"long-context case {case['case_id']} is below 8k whitespace tokens"
-            )
+        if case["category"] == "longcontext":
+            words = len(case["prompt"].split())
+            if not 8000 <= words <= 12000:
+                raise EvaluationError(
+                    f"long-context case {case['case_id']} must contain 8k-12k whitespace tokens"
+                )
         cases.append(case)
     counts = Counter(case["category"] for case in cases)
     missing = {
@@ -249,7 +251,7 @@ def _published_ref(
 
 def load_transformers_model(resolved: ResolvedModelRef, *, device: str):
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForCausalLM
 
     dtype = torch.float32 if device == "cpu" else torch.bfloat16
     if resolved.kind == "hub_model":
@@ -264,9 +266,7 @@ def load_transformers_model(resolved: ResolvedModelRef, *, device: str):
         revision = resolved.base_model["revision"]
     else:
         raise EvaluationError(f"unsupported resolved model kind {resolved.kind}")
-    tokenizer = AutoTokenizer.from_pretrained(
-        source, revision=revision, local_files_only=Path(source).is_absolute()
-    )
+    tokenizer = load_tokenizer(source, revision=revision)
     model = AutoModelForCausalLM.from_pretrained(
         source, revision=revision, dtype=dtype, local_files_only=Path(source).is_absolute()
     )
@@ -310,6 +310,13 @@ def generate_cases(
                 add_generation_prompt=True,
             )
             encoded = tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
+            context_limit = int(model.config.max_position_embeddings)
+            required_length = encoded["input_ids"].shape[1] + case["max_new_tokens"]
+            if required_length > context_limit:
+                raise EvaluationError(
+                    f"case {case['case_id']} requires {required_length} tokens, "
+                    f"exceeding model context {context_limit}"
+                )
             encoded = {key: value.to(device) for key, value in encoded.items()}
             with torch.inference_mode():
                 generated = model.generate(
@@ -327,6 +334,8 @@ def generate_cases(
             record.update(
                 {"output": output, "score": score, "validator_detail": detail, "error": None}
             )
+        except EvaluationError:
+            raise
         except Exception as exc:
             record.update(
                 {
@@ -388,6 +397,8 @@ def run_lm_eval(
 ) -> dict[str, float]:
     if resolved.kind == "hub_model":
         pretrained = resolved.base_model["repo_id"]
+        tokenizer_source = pretrained
+        tokenizer_revision = resolved.base_model["revision"]
         model_args = [
             f"pretrained={pretrained}",
             f"revision={resolved.base_model['revision']}",
@@ -395,6 +406,8 @@ def run_lm_eval(
         ]
     elif resolved.kind == "peft_adapter":
         assert resolved.artifact
+        tokenizer_source = resolved.base_model["repo_id"]
+        tokenizer_revision = resolved.base_model["revision"]
         model_args = [
             f"pretrained={resolved.base_model['repo_id']}",
             f"revision={resolved.base_model['revision']}",
@@ -403,7 +416,27 @@ def run_lm_eval(
         ]
     else:
         assert resolved.artifact
-        model_args = [f"pretrained={_artifact_path(resolved.artifact)}", "dtype=bfloat16"]
+        tokenizer_source = str(_artifact_path(resolved.artifact))
+        tokenizer_revision = None
+        model_args = [f"pretrained={tokenizer_source}", "dtype=bfloat16"]
+    tokenizer = load_tokenizer(tokenizer_source, revision=tokenizer_revision)
+    if not tokenizer.chat_template:
+        raise EvaluationError("lm-eval tokenizer has no chat template")
+    if sha256_bytes(tokenizer.chat_template.encode()) != resolved.chat_template_sha256:
+        raise EvaluationError("lm-eval tokenizer chat template differs from resolved model")
+    expected_tokens = policy.seed_model["special_tokens"]
+    if any(getattr(tokenizer, name) != value for name, value in expected_tokens.items()):
+        raise EvaluationError("lm-eval tokenizer special tokens differ from protected seed")
+    tokenizer_dir = output_dir / "tokenizer"
+    tokenizer.save_pretrained(tokenizer_dir)
+    reloaded = load_tokenizer(tokenizer_dir, local_files_only=True)
+    if (
+        reloaded.chat_template != tokenizer.chat_template
+        or len(reloaded) != len(tokenizer)
+        or reloaded.get_vocab() != tokenizer.get_vocab()
+    ):
+        raise EvaluationError("materialized lm-eval tokenizer changed semantics")
+    model_args.append(f"tokenizer={tokenizer_dir}")
     tasks = policy.document["evaluation"]["lm_eval_tasks"]
     command = [
         "lm-eval",

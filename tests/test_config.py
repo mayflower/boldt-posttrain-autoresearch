@@ -8,7 +8,8 @@ from boldt_posttrain import config
 
 def test_current_is_strict_and_valid():
     loaded = config.load_experiment()
-    assert loaded.document["experiment"]["name"] == "current"
+    assert loaded.document["experiment"]["name"]
+    assert loaded.document["experiment"]["hypothesis"]
     assert "base_model" not in loaded.document["training"]
 
 

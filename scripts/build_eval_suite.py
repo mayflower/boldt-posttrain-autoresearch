@@ -120,11 +120,25 @@ def build() -> list[dict]:
         )
     for index in range(24):
         fact = f"FAKT-{index:03d}-{(index + 73) * 19}"
-        filler = " ".join(f"Kontextwort{word:05d}" for word in range(8500))
-        midpoint = len(filler) // 2
+        vocabulary = (
+            "der",
+            "die",
+            "das",
+            "und",
+            "ist",
+            "ein",
+            "Wort",
+            "im",
+            "langen",
+            "deutschen",
+            "Kontext",
+        )
+        filler_words = [vocabulary[word % len(vocabulary)] for word in range(8500)]
+        midpoint = len(filler_words) // 2
         prompt = (
             "Lies den langen Kontext und antworte nur mit dem eingebetteten Kennwort. Kontext: "
-            f"{filler[:midpoint]} Das gesuchte Kennwort lautet {fact}. {filler[midpoint:]} "
+            f"{' '.join(filler_words[:midpoint])} Das gesuchte Kennwort lautet {fact}. "
+            f"{' '.join(filler_words[midpoint:])} "
             "Frage: Wie lautet das Kennwort?"
         )
         cases.append(

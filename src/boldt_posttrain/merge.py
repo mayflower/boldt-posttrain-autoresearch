@@ -26,7 +26,13 @@ from .artifacts import (
     validate_run_card,
 )
 from .policy import Policy, load_policy
-from .resolver import CandidateRegistry, OUTPUTS, ResolvedModelRef, resolve_candidate
+from .resolver import (
+    CandidateRegistry,
+    OUTPUTS,
+    ResolvedModelRef,
+    load_tokenizer,
+    resolve_candidate,
+)
 from .scoring import load_candidate_score
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -151,7 +157,7 @@ def _full_checkpoint_smoke(
     expected_tokenizer_sha256: str,
 ) -> None:
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForCausalLM
 
     if sha256_file(checkpoint / "tokenizer.json") != expected_tokenizer_sha256:
         raise MergeError("materialized or merged tokenizer differs bytewise from the seed")
@@ -160,7 +166,7 @@ def _full_checkpoint_smoke(
     )
     if model.__class__.__name__ != expected_architecture:
         raise MergeError("merged checkpoint architecture differs from candidates")
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint, local_files_only=True)
+    tokenizer = load_tokenizer(checkpoint, local_files_only=True)
     encoded = tokenizer("Hallo", return_tensors="pt")
     with torch.inference_mode():
         model(**encoded)

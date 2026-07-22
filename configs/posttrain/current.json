@@ -1,12 +1,20 @@
 {
   "schema_version": 1,
   "experiment": {
-    "name": "current",
-    "hypothesis": "Establish verified German data and a reproducible baseline before training.",
-    "lever": "data"
+    "name": "dolci-de-qlora-sft-v1",
+    "hypothesis": "German Dolci instruction tuning improves instruction following without regressing safety, language retention, or long-context behavior.",
+    "lever": "sft"
   },
   "data": {
-    "sources": [],
+    "sources": [
+      {
+        "dataset_id": "openeurollm/Dolci-Instruct-SFT-translated",
+        "revision": "63202c34b23a4f155658a9e157e988902fb62279",
+        "config": "de",
+        "split": "train",
+        "schema": "sft"
+      }
+    ],
     "max_rows": 50000
   },
   "training": {

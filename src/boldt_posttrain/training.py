@@ -23,7 +23,7 @@ from .artifacts import (
 )
 from .data_pipeline import verify_data_manifest
 from .policy import Policy, load_policy
-from .resolver import CandidateRegistry, OUTPUTS
+from .resolver import CandidateRegistry, OUTPUTS, load_tokenizer
 
 from transformers import TrainerCallback
 
@@ -85,12 +85,10 @@ def create_model_and_tokenizer(
 ):
     import torch
     from peft import prepare_model_for_kbit_training
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
     local = Path(model_source).is_absolute()
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_source, revision=revision, local_files_only=local
-    )
+    tokenizer = load_tokenizer(model_source, revision=revision, local_files_only=local)
     kwargs: dict[str, Any] = {
         "revision": revision,
         "local_files_only": local,
@@ -202,7 +200,7 @@ def _checkpoint_smoke(checkpoint: Path, model_source: str, revision: str | None)
     import torch
     from peft import PeftModel
     from safetensors import safe_open
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForCausalLM
 
     config_path = checkpoint / "adapter_config.json"
     weights = checkpoint / "adapter_model.safetensors"
@@ -216,9 +214,7 @@ def _checkpoint_smoke(checkpoint: Path, model_source: str, revision: str | None)
         model_source, revision=revision, local_files_only=local, dtype=torch.float32
     )
     adapter = PeftModel.from_pretrained(base, checkpoint)
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_source, revision=revision, local_files_only=local
-    )
+    tokenizer = load_tokenizer(model_source, revision=revision, local_files_only=local)
     encoded = tokenizer("Hallo", return_tensors="pt")
     with torch.inference_mode():
         adapter(**encoded)

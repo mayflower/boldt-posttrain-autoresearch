@@ -35,6 +35,24 @@ class ResolutionError(RuntimeError):
     """A requested model does not resolve to one exact verified object."""
 
 
+def load_tokenizer(
+    model_source: str | Path,
+    *,
+    revision: str | None = None,
+    local_files_only: bool | None = None,
+):
+    from transformers import AutoTokenizer
+
+    source = str(model_source)
+    local = Path(source).is_absolute() if local_files_only is None else local_files_only
+    return AutoTokenizer.from_pretrained(
+        source,
+        revision=revision,
+        local_files_only=local,
+        extra_special_tokens={},
+    )
+
+
 @dataclass(frozen=True)
 class ResolvedModelRef:
     kind: str

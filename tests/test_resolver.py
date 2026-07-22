@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -13,9 +14,11 @@ from boldt_posttrain.policy import load_policy
 from boldt_posttrain.resolver import (
     CandidateRegistry,
     ResolutionError,
+    load_tokenizer,
     resolve_candidate,
     resolve_model,
 )
+from tests.tiny_model import build_tiny_model
 
 
 def successful_candidate(tmp_path: Path) -> tuple[Path, str]:
@@ -130,3 +133,16 @@ def test_pointer_is_hash_verified(tmp_path: Path):
     run_card.write_text("{}")
     with pytest.raises(ResolutionError, match="hash mismatch"):
         resolve_candidate("champion", load_policy(), outputs_root=outputs)
+
+
+def test_tokenizer_loader_overrides_invalid_extra_special_tokens_metadata(tmp_path: Path):
+    model_path = build_tiny_model(tmp_path / "tiny")
+    config_path = model_path / "tokenizer_config.json"
+    config = json.loads(config_path.read_text())
+    config["extra_special_tokens"] = ["<user>", "<assistant>"]
+    config_path.write_text(json.dumps(config))
+
+    tokenizer = load_tokenizer(model_path, local_files_only=True)
+
+    assert tokenizer.convert_tokens_to_ids("<assistant>") == 4
+    assert tokenizer.chat_template

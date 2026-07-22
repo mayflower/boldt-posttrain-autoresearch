@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from boldt_posttrain.data_pipeline import (
@@ -36,7 +37,7 @@ class GermanLanguage:
         self.policy = policy
 
     def check(self, text: str) -> tuple[bool, float]:
-        return True, 0.99
+        return bool(text.strip()), 0.99
 
 
 def test_discovery_uses_exact_hub_revision_and_captures_split_evidence(monkeypatch):
@@ -77,7 +78,11 @@ def test_discovery_uses_exact_hub_revision_and_captures_split_evidence(monkeypat
         lambda *args, **kwargs: iter(
             [
                 {"prompt": "Warum fällt Regen?", "response": "Wegen der Schwerkraft."},
-                {"prompt": "Nenne ein Buch.", "response": "Ein Roman ist passend."},
+                {
+                    "prompt": "Nenne ein Buch.",
+                    "response": "Ein Roman ist passend.",
+                    "created_at": datetime(2026, 7, 21, tzinfo=timezone.utc),
+                },
             ]
         ),
     )
@@ -87,6 +92,7 @@ def test_discovery_uses_exact_hub_revision_and_captures_split_evidence(monkeypat
     assert candidate["row_estimate"] == 2
     assert candidate["normalized_spdx_license"] == "Apache-2.0"
     assert candidate["schema_classification"] == "sft"
+    assert candidate["language_evidence"]["german"] == 2
     assert candidate["training_usable"] is True
 
 

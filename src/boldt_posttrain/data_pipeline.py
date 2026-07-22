@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import time
 import unicodedata
 from collections import Counter
+from datetime import date, datetime, time as datetime_time
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
@@ -28,6 +30,7 @@ from .artifacts import (
 )
 from .evaluation import load_suite, suite_hash
 from .policy import Policy, load_policy
+from .resolver import load_tokenizer
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUTS = ROOT / "outputs/posttrain"
@@ -327,6 +330,62 @@ def _row_estimate(info: Any, config: str, split: str) -> int | None:
     return None
 
 
+def _canonical_sample_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        return {"type": "float", "value": str(value)}
+    if isinstance(value, datetime):
+        return {"type": "datetime", "value": value.isoformat()}
+    if isinstance(value, date):
+        return {"type": "date", "value": value.isoformat()}
+    if isinstance(value, datetime_time):
+        return {"type": "time", "value": value.isoformat()}
+    if isinstance(value, bytes):
+        return {"type": "bytes", "size": len(value), "sha256": sha256_bytes(value)}
+    if isinstance(value, Mapping):
+        return {
+            str(key): _canonical_sample_value(child)
+            for key, child in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_canonical_sample_value(child) for child in value]
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        return _canonical_sample_value(tolist())
+    tobytes = getattr(value, "tobytes", None)
+    if callable(tobytes):
+        payload = tobytes()
+        if isinstance(payload, bytes):
+            return {
+                "type": f"{type(value).__module__}.{type(value).__qualname__}",
+                "size": len(payload),
+                "sha256": sha256_bytes(payload),
+            }
+    return {"type": f"{type(value).__module__}.{type(value).__qualname__}"}
+
+
+def _discovery_language_text(row: Mapping[str, Any], source: Mapping[str, str]) -> str:
+    schema = classify_schema(row)
+    if schema is None:
+        return "\n".join(value for value in row.values() if isinstance(value, str))
+    normalized = normalize_row(
+        row,
+        {
+            "dataset_id": source["dataset_id"],
+            "revision": source["revision"],
+            "config": source["config"],
+            "split": source["split"],
+            "schema": schema,
+            "license": source["license"],
+        },
+        "discovery-sample",
+    )
+    return "\n".join(row_texts(normalized))
+
+
 def discover(policy: Policy, *, api=None, sample_limit: int = 20) -> dict[str, Any]:
     from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset
     from huggingface_hub import HfApi
@@ -393,14 +452,21 @@ def discover(policy: Policy, *, api=None, sample_limit: int = 20) -> dict[str, A
                         except Exception as exc:
                             reasons.append(f"sample_stream_failed:{type(exc).__name__}")
                     schemas = Counter(classify_schema(row) or "unknown" for row in sample)
-                    checks = [
-                        language.check(
-                            "\n".join(
-                                str(value) for value in row.values() if isinstance(value, str)
-                            )
-                        )
-                        for row in sample
-                    ]
+                    checks: list[tuple[bool, float]] = []
+                    source = {
+                        "dataset_id": listed.id,
+                        "revision": revision,
+                        "config": config,
+                        "split": split,
+                        "license": spdx or "unreviewed",
+                    }
+                    for row in sample:
+                        try:
+                            checks.append(language.check(_discovery_language_text(row, source)))
+                        except DataError:
+                            checks.append((False, 0.0))
+                    if checks and not any(ok for ok, _ in checks):
+                        reasons.append("sample_language_not_german")
                     candidates.append(
                         {
                             "dataset_id": listed.id,
@@ -431,7 +497,9 @@ def discover(policy: Policy, *, api=None, sample_limit: int = 20) -> dict[str, A
                                 if checks
                                 else 0.0,
                             },
-                            "sample_hash": sha256_bytes(canonical_json_bytes(sample)),
+                            "sample_hash": sha256_bytes(
+                                canonical_json_bytes(_canonical_sample_value(sample))
+                            ),
                             "training_usable": not reasons and bool(sample),
                             "rejection_reasons": reasons,
                         }
@@ -621,12 +689,8 @@ def prepare(policy: Policy, config_path: Path, *, rows_provider=_source_rows) ->
             kind: [row for row in clean if row["type"] == kind]
             for kind in ("sft", "preference", "cpt")
         }
-        from transformers import AutoTokenizer
-
-        tokenizer = AutoTokenizer.from_pretrained(
-            policy.seed_model["repo_id"],
-            revision=policy.seed_model["revision"],
-            local_files_only=Path(policy.seed_model["repo_id"]).is_absolute(),
+        tokenizer = load_tokenizer(
+            policy.seed_model["repo_id"], revision=policy.seed_model["revision"]
         )
         token_lengths = {
             row["content_id"]: len(
