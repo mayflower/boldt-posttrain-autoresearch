@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Discover German candidate subsets in the Hugging Face org ``openeurollm`` (dry-run-first).
+"""Discover German candidate subsets or inspect explicitly policy-pinned sources (dry-run-first).
 
 Dry mode validates config and writes a discovery skeleton + the documented discovery PLAN (how
 German candidates are identified) without any network calls. Real mode requires the optional
@@ -9,6 +9,7 @@ discovery is implemented per the contracts — it never invents dataset candidat
     python scripts/pt_discover_openeurollm_de.py --config configs/posttrain/current.json \
         --out outputs/posttrain/data/discovery.json --format markdown --dry-run
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,10 +23,16 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from boldt_posttrain import config as cfgmod  # noqa: E402
 from boldt_posttrain import recipe  # noqa: E402
+from boldt_posttrain import provenance as prov  # noqa: E402
+from boldt_posttrain.data_pipeline import (  # noqa: E402
+    canonical_json,
+    discover_sources,
+    language_identifier_from_config,
+    sha256_bytes,
+)
 
-CONTRACT = "docs/posttrain-script-contracts.md"
 PLAN = [
-    "list_datasets(author='openeurollm') — no full downloads",
+    "inspect configured pinned sources, or list_datasets(author=data.org) when none are configured",
     "get_dataset_config_names / get_dataset_split_names per dataset",
     "flag German by config/split name (de|deu|ger|german|deutsch) OR a language column value "
     "in the allowlist OR a deterministic langid check on streamed samples",
@@ -48,33 +55,74 @@ def main(argv: Optional[List[str]] = None) -> int:
     org = cfg.get("data", {}).get("org", "openeurollm")
 
     if dry:
-        doc = {"status": "ok" if not errors else "fail", "mode": "dry_run", "org": org,
-               "candidates": [], "discovery_plan": PLAN, "config_errors": errors,
-               "scale_disclaimer": "dry-run plumbing only — no datasets were inspected"}
+        doc = {
+            "status": "ok" if not errors else "fail",
+            "mode": "dry_run",
+            "org": org,
+            "candidates": [],
+            "discovery_plan": PLAN,
+            "config_errors": errors,
+            "scale_disclaimer": "dry-run plumbing only — no datasets were inspected",
+        }
     else:
+        data_cfg = cfg.get("data", {})
         try:
-            import huggingface_hub  # noqa: F401
-            ni = recipe.real_not_implemented("openeurollm_discovery", CONTRACT)
-            doc = {"status": "fail", "mode": "real", "org": org, "candidates": [], **ni}
-        except Exception:
-            doc = {"status": "fail", "mode": "real", "org": org, "candidates": [],
-                   "message": "real discovery needs the optional data extra: "
-                              "pip install -e '.[data]'"}
+            fixture = data_cfg.get("discovery_fixture")
+            infos = (
+                json.loads(pathlib.Path(fixture).read_text(encoding="utf-8"))
+                if fixture
+                else data_cfg.get("sources")
+            )
+            lang = language_identifier_from_config(
+                data_cfg, cache_dir=ROOT / "outputs/posttrain/cache"
+            )
+            candidates = discover_sources(
+                org=org,
+                allowed_licenses=data_cfg.get("allowed_licenses", []),
+                sample_size=int(data_cfg.get("discovery_sample_size", 64)),
+                dataset_infos=infos,
+                language_id=lang,
+            )
+            body = {
+                "status": "ok",
+                "mode": "real",
+                "org": org,
+                "run_id": f"discovery-{prov.stamp()}",
+                "candidates": candidates,
+                "language_id_hash": lang.model_hash,
+            }
+            doc = {**body, "artifact_hash": sha256_bytes(canonical_json(body))}
+        except (ImportError, OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            doc = {
+                "status": "failed",
+                "mode": "real",
+                "org": org,
+                "candidates": [],
+                "message": f"technical discovery failure: {type(exc).__name__}: {exc}",
+            }
 
     recipe.write_json(pathlib.Path(args.out), doc)
     if args.format == "markdown":
-        print(f"# OpenEuroLLM German discovery — {doc['status']} ({doc['mode']})\n")
+        print(f"# German data discovery — {doc['status']} ({doc['mode']})\n")
         print(f"- org: `{org}`  ·  candidates: {len(doc['candidates'])}  ·  out: `{args.out}`")
         for e in errors:
             print(f"- ✗ config: {e}")
         if doc.get("message"):
             print(f"- {doc['message']}")
-        print("\n## Discovery plan\n" + "\n".join(f"{i+1}. {s}" for i, s in enumerate(PLAN)))
+        print("\n## Discovery plan\n" + "\n".join(f"{i + 1}. {s}" for i, s in enumerate(PLAN)))
     else:
-        print(json.dumps({"status": doc["status"], "org": org,
-                          "candidates": len(doc["candidates"]), "out": args.out},
-                         ensure_ascii=False))
-    return 0 if doc["status"] == "ok" else 1
+        print(
+            json.dumps(
+                {
+                    "status": doc["status"],
+                    "org": org,
+                    "candidates": len(doc["candidates"]),
+                    "out": args.out,
+                },
+                ensure_ascii=False,
+            )
+        )
+    return 0 if doc["status"] == "ok" else 4
 
 
 if __name__ == "__main__":

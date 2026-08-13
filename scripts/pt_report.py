@@ -5,6 +5,7 @@ Aggregates ``pt_status`` (readiness/next-lever), ``frontier`` (the candidate ran
 of ``results.tsv`` (the audit log) into one view. ``--no-write`` prints only; otherwise it also
 writes ``outputs/posttrain/report.md`` (+ ``report.json``) for the record.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -51,17 +52,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     current = fr.current_frontier()
     results_tail = _tail_results(args.tail)
 
-    doc = {"status": status, "frontier": view, "promoted_frontier": current,
-           "results_tail": results_tail}
+    doc = {
+        "status": status,
+        "frontier": view,
+        "promoted_frontier": current,
+        "results_tail": results_tail,
+    }
 
     if args.format == "json":
         out = json.dumps(doc, ensure_ascii=False, indent=2)
     else:
-        lines = ["# Post-training AutoResearch — report", "",
-                 f"Base model: `{status['base_model']}`  ·  "
-                 f"config {'valid' if status['config_valid'] else 'INVALID'}  ·  "
-                 f"scripts {status['scripts_present']}/{status['scripts_total']}", "",
-                 "## Artifacts", ""]
+        lines = [
+            "# Post-training AutoResearch — report",
+            "",
+            f"Base model: `{status['base_model']}`  ·  "
+            f"config {'valid' if status['config_valid'] else 'INVALID'}  ·  "
+            f"scripts {status['scripts_present']}/{status['scripts_total']}",
+            "",
+            "## Artifacts",
+            "",
+        ]
         lines += [f"- {'✓' if v else '·'} {k}" for k, v in status["artifacts"].items()]
         lines += ["", "## Frontier", ""]
         if view["n_candidates"] == 0:
@@ -69,14 +79,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             best = view["frontier_best"]
             lines.append(f"- candidates: {view['n_candidates']} (real: {view['n_real']})")
-            lines.append(f"- frontier-best (real): "
-                         + (f"`{best['label']}` agg {best['aggregate']}" if best else "none"))
+            lines.append(
+                "- frontier-best (real): "
+                + (f"`{best['label']}` agg {best['aggregate']}" if best else "none")
+            )
             if len(view["complementary_merge_inputs"]) >= 2:
-                lines.append("- complementary merge inputs: "
-                             + ", ".join("`" + d + "`" for d in view["complementary_merge_inputs"]))
+                lines.append(
+                    "- complementary merge inputs: "
+                    + ", ".join("`" + d + "`" for d in view["complementary_merge_inputs"])
+                )
         if current:
-            lines += ["", "## Promoted frontier (frontier.json)", "",
-                      f"```json\n{json.dumps(current, ensure_ascii=False, indent=2)}\n```"]
+            lines += [
+                "",
+                "## Promoted frontier (frontier.json)",
+                "",
+                f"```json\n{json.dumps(current, ensure_ascii=False, indent=2)}\n```",
+            ]
         lines += ["", "## Recent results", ""]
         if results_tail:
             lines += ["```", *results_tail, "```"]
@@ -89,8 +107,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.no_write:
         outdir = ROOT / "outputs" / "posttrain"
         outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / "report.json").write_text(json.dumps(doc, ensure_ascii=False, indent=2),
-                                            encoding="utf-8")
+        (outdir / "report.json").write_text(
+            json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         if args.format == "markdown":
             (outdir / "report.md").write_text(out, encoding="utf-8")
     return 0

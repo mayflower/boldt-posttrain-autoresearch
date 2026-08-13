@@ -1,0 +1,57 @@
+name: Post-training GPU acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: Protected experiment config
+        default: configs/posttrain/current.json
+        required: true
+
+jobs:
+  acceptance:
+    runs-on: [self-hosted, linux, x64, gpu-48gb]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install locked environment
+        run: uv sync --extra train --extra eval --extra data --extra merge --frozen
+      - name: Doctor and policy
+        run: |
+          uv run pt policy validate
+          uv run python -c 'from boldt_posttrain.training import validate_device; print(validate_device("cuda:0", minimum_vram_gb=40))'
+      - name: Bootstrap verified data and baseline evidence
+        run: uv run pt bootstrap run --real --allow-gpu --device cuda:0 --budget-minutes 60
+      - name: Two Boldt QLoRA steps
+        run: |
+          uv run python -c 'import json; p="${{ inputs.config }}"; d=json.load(open(p)); d["training"]["max_steps"]=2; open("configs/posttrain/experiments/gpu-smoke.json","w").write(json.dumps(d))'
+          uv run python scripts/pt_train_specialist.py --real --allow-gpu --allow-checkpoints --device cuda:0 --config configs/posttrain/experiments/gpu-smoke.json --specialist gpu-smoke
+      - name: Verify or establish dev baseline
+        run: |
+          if test -f outputs/posttrain/baseline/dev/current.json; then
+            uv run python -c 'import json; d=json.load(open("outputs/posttrain/baseline/dev/current.json")); assert d["status"]=="ok" and d["technical_error_count"]==0'
+          else
+            uv run python scripts/pt_baseline.py --real --allow-gpu --device cuda:0 --profile dev --config "${{ inputs.config }}"
+          fi
+      - name: Sixteen-step RLOO and proxy evaluation
+        run: |
+          uv run python -c 'import json; p="configs/posttrain/experiments/gpu-smoke.json"; d=json.load(open(p)); d["training"]["max_steps"]=16; open(p,"w").write(json.dumps(d))'
+          uv run python scripts/prepare_rlvr_smoke.py --config configs/posttrain/experiments/gpu-smoke.json --decontamination outputs/posttrain/data/decontamination.json --out outputs/posttrain/gpu-rlvr-data
+          uv run pt train rlvr --real --allow-gpu --allow-checkpoints --device cuda:0 --config configs/posttrain/experiments/gpu-smoke.json --data outputs/posttrain/gpu-rlvr-data --budget-minutes 45
+          adapter=$(find outputs/posttrain/runs -path '*/rlvr-*/adapter' -type d | sort | tail -1)
+          uv run python scripts/pt_eval.py --real --allow-gpu --device cuda:0 --profile proxy --model "$adapter" --label gpu-rloo-proxy
+      - name: Reload and validate chains
+        run: |
+          uv run python -c 'from pathlib import Path; from boldt_posttrain.provenance import validate_event_chain; p=Path("outputs/posttrain/events.jsonl"); assert not p.exists() or not validate_event_chain(p)'
+          uv run python scripts/check_posttrain_integrity.py --format json
+      - name: Preserve logs and verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: posttrain-gpu-acceptance
+          path: |
+            outputs/posttrain/**/*.json
+            outputs/posttrain/**/*.jsonl
+            outputs/posttrain/**/*.log
+          if-no-files-found: error

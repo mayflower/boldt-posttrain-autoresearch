@@ -1,7 +1,7 @@
 ---
 description: THE autonomous post-training AutoResearch loop — assess, choose one lever, run, eval, judge, repeat
 argument-hint: "[rounds] [dry|real]"
-allowed-tools: Bash(python scripts/pt_*.py *) Bash(python scripts/check_posttrain_integrity.py *) Bash(cat *) Bash(tail *) Bash(find *) Bash(git diff *) Bash(git status *) Read Edit Glob Grep
+allowed-tools: Bash(python scripts/pt_*.py *) Bash(python scripts/check_posttrain_integrity.py *) Bash(git diff *) Bash(git status *) Edit Glob Grep
 disable-model-invocation: true
 ---
 # PostTrain AutoResearch loop
@@ -29,10 +29,10 @@ Read:
 Run read-only state commands when available:
 
 ```bash
-test -f scripts/pt_frontier_status.py && python scripts/pt_frontier_status.py --format markdown || true
-test -f scripts/pt_report.py && python scripts/pt_report.py --format markdown --no-write || true
-tail -n 20 outputs/posttrain/results.tsv 2>/dev/null || true
-cat outputs/posttrain/frontier.json 2>/dev/null || true
+test -f scripts/pt_frontier_status.py && python scripts/pt_frontier_status.py --format markdown
+test -f scripts/pt_report.py && python scripts/pt_report.py --format markdown --no-write
+tail -n 20 outputs/posttrain/results.tsv 2>/dev/null
+cat outputs/posttrain/frontier.json 2>/dev/null
 ```
 
 ## Each round k = 1..N

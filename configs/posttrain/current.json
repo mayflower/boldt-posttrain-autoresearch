@@ -1,24 +1,53 @@
 {
   "extends": "configs/posttrain/base.json",
+  "policy": "configs/posttrain/policy.json",
   "experiment": {
     "name": "current",
-    "hypothesis": "Start with dry-run data discovery and baseline evaluation before training."
+    "hypothesis": "Bootstrap verified data and baseline evidence, then run an SFT search.",
+    "lever": "sft"
   },
   "data": {
-    "org": "openeurollm",
+    "org": "allenai",
+    "sources": [
+      {
+        "dataset": "allenai/Dolci-Instruct-SFT",
+        "org": "allenai",
+        "revision": "bd3c8f3a9b2cc5a9682e44b96ddd0bb2ff027221",
+        "configs": ["default"],
+        "splits": ["train"],
+        "schema": "sft",
+        "license": "odc-by",
+        "source_group": "dolci-instruct-sft-de",
+        "language_filter": "de",
+        "row_count": 2152112
+      }
+    ],
     "language_allowlist": ["de", "deu", "de-DE", "German", "Deutsch"],
-    "schemas": ["sft", "preference", "cpt"],
+    "schemas": ["sft", "preference", "cpt", "verified_math"],
+    "max_rows": 50000,
+    "validation_fraction": {
+      "sft": 0.02,
+      "cpt": 0.02,
+      "preference": 0.05,
+      "verified_math": 0.05
+    },
     "max_rows_per_source_dry": 200,
     "max_rows_per_source_real": 50000,
     "min_german_confidence": 0.80,
     "require_license_review": true,
-    "require_leakage_clean": true
+    "require_leakage_clean": true,
+    "allowed_licenses": ["apache-2.0", "mit", "cc-by", "cc-by-sa", "cc0", "openrail", "odc-by"],
+    "exact_dedup_limit": 2000000,
+    "decontamination_hash": null,
+    "language_id_url": "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz",
+    "language_id_sha256": "8f3472cfe8738a7b6099e8e999c3cbfae0dcd15696aac7d7738a8039db603e83"
   },
   "training": {
     "base_model": "mayflowergmbh/boldt-dc-1b-german-it-16k-dpo",
     "context_length": 16384,
     "specialist": "general-de",
     "method": "qlora",
+    "seed": 17,
     "learning_rate": 0.00001,
     "num_train_epochs": 1,
     "max_steps": 1000,
@@ -29,29 +58,89 @@
     "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
     "bf16": true,
     "packing": true,
-    "gradient_checkpointing": true
+    "gradient_checkpointing": true,
+    "assistant_only_loss": true,
+    "device": "cuda:0",
+    "lora_init": "default",
+    "use_rslora": false,
+    "use_liger_kernel": false
   },
   "preference": {
     "enabled": false,
+    "method": "dpo",
     "loss_type": "sigmoid",
     "beta": 0.1,
-    "rpo_alpha": 0.5,
-    "length_ratio_max": 3.0
+    "sft_loss_weight": 0.0,
+    "length_ratio_max": 3.0,
+    "max_prompt_length": 4096,
+    "max_completion_length": 2048,
+    "probe_set": "data/eval/preference_probes.json"
+  },
+  "cpt": {
+    "train_embeddings": false,
+    "train_lm_head": false,
+    "module_learning_rate_multiplier": 0.1
+  },
+  "verified_rl": {
+    "enabled": false,
+    "reward_profile": "math_accuracy",
+    "num_generations": 4,
+    "batch_size": 4,
+    "max_prompt_length": 2048,
+    "max_completion_length": 1024,
+    "temperature": 1.0,
+    "beta": 0.0
+  },
+  "rlvr": {
+    "enabled": true,
+    "num_generations": 4,
+    "max_completion_length": 256,
+    "kl_coefficient": 0.05,
+    "batch_size": 4,
+    "gradient_accumulation_steps": 1,
+    "use_vllm": false,
+    "use_liger_kernel": false
+  },
+  "synthesis": {
+    "seed": 17,
+    "maximum_examples": 128,
+    "best_of_n": 4,
+    "sampling": {
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "max_new_tokens": 256,
+      "seed": 17
+    }
   },
   "merge": {
     "enabled": true,
     "methods": ["linear", "slerp", "ties", "dare_ties"],
     "base_model": "mayflowergmbh/boldt-dc-1b-german-it-16k-dpo",
     "tokenizer_source": "union",
-    "dtype": "bfloat16"
+    "dtype": "bfloat16",
+    "max_candidates": 12,
+    "device": "cpu"
   },
   "eval": {
     "suite": "german-core",
     "decode_temperature": 0.0,
     "max_new_tokens": 512,
     "lm_eval_tasks": ["arc_de", "hellaswag_de", "m_mmlu_de", "truthfulqa_de_mc2", "belebele_deu_Latn"],
+    "lm_eval_revision": "lm-eval==0.4.12",
     "regression_tolerance_abs": 0.01,
     "english_bleed_max": 0.05,
-    "empty_output_max": 0.01
+    "empty_output_max": 0.01,
+    "german_language_retention_min": 0.8,
+    "safety_min": 0.8,
+    "format_following_min": 0.8,
+    "profile": "dev",
+    "dev_suite": "data/eval/dev.json",
+    "promotion_registry": "configs/posttrain/promotion-suite.json",
+    "proxy_lm_eval_limit": 8,
+    "minimum_longcontext_tokens": 1024,
+    "template_overhead": 32
+  },
+  "hardware": {
+    "minimum_vram_gb": 40
   }
 }

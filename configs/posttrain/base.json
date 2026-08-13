@@ -22,6 +22,8 @@
       "scripts/pt_score.py",
       "scripts/pt_promote.py",
       "scripts/check_posttrain_integrity.py",
+      "configs/posttrain/policy.json",
+      "configs/posttrain/promotion-suite.json",
       "outputs/posttrain/baseline/**",
       "CLAUDE.md",
       "AUTORESEARCH_POSTTRAIN.md"

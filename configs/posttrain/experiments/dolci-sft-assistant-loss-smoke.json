@@ -1,0 +1,21 @@
+{
+  "extends": "configs/posttrain/current.json",
+  "experiment": {
+    "name": "dolci-sft-assistant-loss-smoke",
+    "hypothesis": "Measure assistant-only SFT on the same pinned German Dolci shards.",
+    "lever": "sft"
+  },
+  "data": {
+    "decontamination_hash": "e99dc229c692759c3dc0bc804ebef18c618d8c5343141b07e46ad47c87f197ce"
+  },
+  "training": {
+    "max_steps": 10,
+    "batch_size": 1,
+    "gradient_accumulation_steps": 1,
+    "packing": false,
+    "assistant_only_loss": true,
+    "use_liger_kernel": false,
+    "use_rslora": false,
+    "device": "cuda:1"
+  }
+}

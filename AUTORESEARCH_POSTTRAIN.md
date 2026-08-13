@@ -4,7 +4,7 @@ Operating manual for Claude Code / agentic runs. Read before changing anything.
 
 ## Goal
 
-Post-train `mayflowergmbh/boldt-dc-1b-german-it-16k-dpo` into a stronger German-first small instruction model using auditable German portions of `openeurollm/*` datasets. The loop follows a Liquid-AI-style recipe adapted to a Llama-family 1B model: branch from one warm start, train small complementary specialists, merge promising checkpoints, evaluate, and promote only measured improvements.
+Post-train `mayflowergmbh/boldt-dc-1b-german-it-16k-dpo` into a stronger German-first small instruction model using auditable, policy-approved German data. The loop follows a Liquid-AI-style recipe adapted to a Llama-family 1B model: branch from one warm start, train small complementary specialists, merge promising checkpoints, evaluate, and promote only measured improvements.
 
 ## Default run modes
 
@@ -21,7 +21,7 @@ Post-train `mayflowergmbh/boldt-dc-1b-german-it-16k-dpo` into a stronger German-
 
 ## Data policy
 
-The only default remote data source family is Hugging Face org `openeurollm`. Data discovery must be dynamic, not a hard-coded list.
+The default remote discovery family is Hugging Face org `openeurollm`. A config may instead name an explicit remote source only when its dataset, immutable revision, and license exactly match `policy.json`'s `allowed_sources`; configured sources are never broadened to their whole organization.
 
 A row/config/split is considered German candidate data if at least one holds:
 
@@ -33,9 +33,15 @@ The preparation step must normalize rows into one of these schemas:
 
 ```json
 {"type":"sft", "messages":[{"role":"user","content":"..."},{"role":"assistant","content":"..."}], "source":"...", "license":"..."}
-{"type":"preference", "prompt":"...", "chosen":"...", "rejected":"...", "source":"...", "license":"..."}
+{"type":"preference", "prompt":[{"role":"user","content":"..."}], "chosen":[{"role":"assistant","content":"..."}], "rejected":[{"role":"assistant","content":"..."}], "source":"...", "license":"..."}
 {"type":"cpt", "text":"...", "source":"...", "license":"..."}
+{"type":"verified_math", "prompt":[{"role":"user","content":"..."}], "solution":"\\frac{1}{3}", "source":"...", "license":"..."}
 ```
+
+Every pinned source is scanned completely. A seed-keyed SHA-256 priority selects bounded rows
+independently of source iteration order; the pipeline never takes the first N valid rows. Exact
+content IDs then produce deterministic, disjoint train/validation shards. Conversational token
+lengths, truncation, and assistant supervision are measured with the protected chat template.
 
 CPT rows are not mixed directly into SFT. They are only for tiny low-LR continued-pretraining/domain-refresh specialists and must be capped aggressively to avoid style drift.
 
@@ -57,6 +63,7 @@ The orchestrator chooses one lever per round based on measured state. Do not run
 | `sft-specialist` | train one small LoRA/QLoRA specialist | `scripts/pt_train_specialist.py` |
 | `pref-specialist` | DPO/ORPO/KTO-style specialist from preference rows | `scripts/pt_train_preference.py` |
 | `cpt-specialist` | tiny low-LR German domain refresh from high-quality raw text | `scripts/pt_train_cpt.py` |
+| `grpo` | GRPO only over licensed, parseable verified-math rows | `pt train grpo` |
 | `merge` | merge complementary specialists / base / previous winner | `scripts/pt_merge_search.py` |
 | `distill` | generate and train compact teacher-judged corrections | `scripts/pt_distill_trial.py` |
 | `eval` | evaluate candidate and update frontier | `scripts/pt_eval.py`, `scripts/pt_score.py` |
@@ -154,6 +161,11 @@ One round:
 8. Stop early if promotable, if two consecutive rounds do not improve the frontier, or if integrity fails.
 
 State lives on disk; there is no hidden controller and no private state file.
+
+SFT, CPT, DPO, KTO, and ORPO evaluate during training and publish the best validated adapter, not
+the last in-memory state. Assistant-only loss is the SFT default. Liger and rsLoRA remain opt-in;
+CPT embedding/LM-head updates are an explicit non-quantized experiment. GRPO has exactly one
+positive reward, Math-Verify correctness. There is no Unsloth backend, reward DSL, or vLLM path.
 
 ## Required artifacts
 

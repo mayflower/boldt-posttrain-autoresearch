@@ -10,6 +10,7 @@ with METADATA POINTERS ONLY — never weights, never a Hugging Face push.
 
     python scripts/pt_promote.py --candidate my-merge --format markdown
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,35 +27,58 @@ from boldt_posttrain import config as cfgmod  # noqa: E402
 from boldt_posttrain import frontier as fr  # noqa: E402
 from boldt_posttrain import provenance as prov  # noqa: E402
 from boldt_posttrain import scoring  # noqa: E402
+from boldt_posttrain.data_pipeline import verify_hashed_artifact  # noqa: E402
 
 OUT = ROOT / "outputs" / "posttrain"
-DEFAULT_BASELINE = OUT / "baseline" / "summary.json"
+DEFAULT_BASELINE = OUT / "baseline" / "promotion" / "current.json"
 FRONTIER = OUT / "frontier.json"
 
 
 def _integrity(base_ref: Optional[str]) -> Dict[str, Any]:
     spec = importlib.util.spec_from_file_location(
-        "check_posttrain_integrity", ROOT / "scripts" / "check_posttrain_integrity.py")
+        "check_posttrain_integrity", ROOT / "scripts" / "check_posttrain_integrity.py"
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod.evaluate(mod.changed_paths(base_ref))
 
 
-def evaluate_promotion(candidate: str, cfg: Dict[str, Any], baseline_path: pathlib.Path,
-                       base_ref: Optional[str]) -> Dict[str, Any]:
+def evaluate_promotion(
+    candidate: str, cfg: Dict[str, Any], baseline_path: pathlib.Path, base_ref: Optional[str]
+) -> Dict[str, Any]:
     cand_summary = fr.EVALS / candidate / "summary.json"
     failed: List[str] = []
     if not cand_summary.exists():
-        return {"candidate": candidate, "promotable": False,
-                "failed_gates": ["candidate_summary_missing"],
-                "error": f"no eval summary at {cand_summary} — run /pt-eval first"}
+        return {
+            "candidate": candidate,
+            "promotable": False,
+            "failed_gates": ["candidate_summary_missing"],
+            "error": f"no eval summary at {cand_summary} — run /pt-eval first",
+        }
     if not baseline_path.exists():
-        return {"candidate": candidate, "promotable": False,
-                "failed_gates": ["baseline_missing"],
-                "error": f"no baseline at {baseline_path} — run /pt-baseline first"}
+        return {
+            "candidate": candidate,
+            "promotable": False,
+            "failed_gates": ["baseline_missing"],
+            "error": f"no baseline at {baseline_path} — run /pt-baseline first",
+        }
 
     run = json.loads(cand_summary.read_text(encoding="utf-8"))
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    if not verify_hashed_artifact(run) or not verify_hashed_artifact(baseline):
+        return {
+            "candidate": candidate,
+            "promotable": False,
+            "failed_gates": ["artifact_integrity"],
+            "error": "candidate or baseline artifact hash is invalid",
+        }
+    if run.get("profile") != "promotion" or baseline.get("profile") != "promotion":
+        return {
+            "candidate": candidate,
+            "promotable": False,
+            "failed_gates": ["promotion_profile_required"],
+            "error": "promotion requires candidate and baseline promotion evaluations",
+        }
     score = scoring.score_run(run, baseline, scoring.thresholds_from_config(cfg))
     if score["status"] != "pass":
         failed += [g["name"] for g in score["failed_gates"]]
@@ -112,23 +136,34 @@ def write_frontier(verdict: Dict[str, Any]) -> None:
 
 
 def render(verdict: Dict[str, Any]) -> str:
-    lines = ["# Post-training promotion report", "",
-             f"Candidate: `{verdict['candidate']}`  ·  promotable: **{verdict['promotable']}**"]
+    lines = [
+        "# Post-training promotion report",
+        "",
+        f"Candidate: `{verdict['candidate']}`  ·  promotable: **{verdict['promotable']}**",
+    ]
     if verdict.get("error"):
         lines += ["", f"FAIL: {verdict['error']}"]
         return "\n".join(lines) + "\n"
-    lines += ["",
-              f"- score: `{verdict['score']}` ({verdict['score_status']})",
-              f"- Δ german_instruction: `{verdict['german_instruction_delta']}` (must be > 0)",
-              f"- candidate aggregate: `{verdict['candidate_aggregate']}`  ·  previous frontier: "
-              f"`{verdict['previous_frontier_aggregate']}`",
-              f"- integrity: `{verdict['integrity']}`"
-              + (f" (violations: {verdict['integrity_violations']})"
-                 if verdict["integrity_violations"] else ""),
-              f"- failed gates: {verdict['failed_gates'] or 'none'}"]
+    lines += [
+        "",
+        f"- score: `{verdict['score']}` ({verdict['score_status']})",
+        f"- Δ german_instruction: `{verdict['german_instruction_delta']}` (must be > 0)",
+        f"- candidate aggregate: `{verdict['candidate_aggregate']}`  ·  previous frontier: "
+        f"`{verdict['previous_frontier_aggregate']}`",
+        f"- integrity: `{verdict['integrity']}`"
+        + (
+            f" (violations: {verdict['integrity_violations']})"
+            if verdict["integrity_violations"]
+            else ""
+        ),
+        f"- failed gates: {verdict['failed_gates'] or 'none'}",
+    ]
     if verdict["promotable"]:
-        lines += ["", "✅ Gates passed. frontier.json updated with metadata pointers (no weights). "
-                  "Human review required before any public release."]
+        lines += [
+            "",
+            "✅ Gates passed. frontier.json updated with metadata pointers (no weights). "
+            "Human review required before any public release.",
+        ]
     else:
         lines += ["", "❌ Not promotable — frontier.json unchanged."]
     return "\n".join(lines) + "\n"
@@ -146,14 +181,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         cfg = cfgmod.resolve_config(pathlib.Path(args.config))
-    except Exception:
-        cfg = {}
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(json.dumps({"status": "fail", "error": f"config resolution failed: {exc}"}))
+        return 5
     verdict = evaluate_promotion(args.candidate, cfg, pathlib.Path(args.baseline), args.base_ref)
 
     out_dir = pathlib.Path(args.out) / args.candidate
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "promotion_verdict.json").write_text(
-        json.dumps(verdict, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(verdict, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     (out_dir / "promotion_report.md").write_text(render(verdict), encoding="utf-8")
 
     if verdict["promotable"]:

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "protected": true,
+  "allowed_licenses": ["apache-2.0", "mit", "bsd", "cc-by", "cc-by-sa", "cc0", "openrail", "odc-by"],
+  "allowed_sources": [
+    {
+      "dataset": "allenai/Dolci-Instruct-SFT",
+      "revision": "bd3c8f3a9b2cc5a9682e44b96ddd0bb2ff027221",
+      "license": "odc-by"
+    }
+  ],
+  "maximum_merge_candidates": 12,
+  "maximum_search_trials": 9,
+  "minimum_source_weights": {"safety": 0.1, "language": 0.1},
+  "failure_dimension_weights": {
+    "instruction": 1.0,
+    "format": 1.0,
+    "reasoning": 1.0,
+    "longcontext": 1.0,
+    "language": 1.5,
+    "over_refusal": 1.5,
+    "safety": 2.0,
+    "coding": 1.0
+  },
+  "promotion_gates": {
+    "german_instruction_ci_lower": 0.0,
+    "safety_ci_lower": -0.005,
+    "over_refusal_ci_upper": 0.05,
+    "english_bleed_ci_upper": 0.05,
+    "german_language_retention_ci_lower": 0.0
+  },
+  "score_weights": {
+    "german_instruction": 2.0,
+    "format_following": 1.0,
+    "reasoning_core": 1.0,
+    "longcontext": 0.5,
+    "german_language_retention": 1.0
+  },
+  "reward_weights": {
+    "exact": 1.0,
+    "numeric": 1.0,
+    "json_schema": 1.0,
+    "ordered_terms": 1.0,
+    "german_language": 0.2,
+    "non_refusal": 0.2,
+    "concise_length": 0.1
+  },
+  "reward_clamp": [-1.0, 2.0]
+}

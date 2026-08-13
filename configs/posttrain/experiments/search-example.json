@@ -1,0 +1,15 @@
+{
+  "extends": "configs/posttrain/current.json",
+  "experiment": {
+    "name": "search-example",
+    "hypothesis": "Compare a small set of explicit LoRA recipes with serial Successive Halving.",
+    "lever": "sft"
+  },
+  "search_plan": {
+    "trials": [
+      {"trial_id": "lr10-r16-default", "overrides": {"learning_rate": 0.00001, "lora_r": 16, "lora_alpha": 32, "lora_init": "default", "use_rslora": false}},
+      {"trial_id": "lr20-r16-rslora", "overrides": {"learning_rate": 0.00002, "lora_r": 16, "lora_alpha": 32, "lora_init": "default", "use_rslora": true}},
+      {"trial_id": "lr10-r32-pissa", "overrides": {"learning_rate": 0.00001, "lora_r": 32, "lora_alpha": 64, "lora_init": "pissa_niter_4", "use_rslora": false}}
+    ]
+  }
+}

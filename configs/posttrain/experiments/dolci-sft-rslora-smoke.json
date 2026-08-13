@@ -1,0 +1,11 @@
+{
+  "extends": "configs/posttrain/experiments/dolci-sft-full-loss-smoke.json",
+  "experiment": {
+    "name": "dolci-sft-rslora-smoke",
+    "hypothesis": "Probe rsLoRA against the same short full-sequence SFT control.",
+    "lever": "sft"
+  },
+  "training": {
+    "use_rslora": true
+  }
+}

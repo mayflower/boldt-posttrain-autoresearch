@@ -1,31 +1,18 @@
 ---
-description: Evaluate a seed, specialist, or merged candidate with the German-core suite
-argument-hint: "[dry|real] <model-or-candidate-label>"
-allowed-tools: Bash(python scripts/pt_eval.py *) Bash(python scripts/pt_score.py *) Bash(cat *) Bash(find *) Read
+description: Run a proxy, development, or promotion evaluation and protected scoring
+argument-hint: "proxy|dev|promotion <model> <label> [--device cuda:N]"
+allowed-tools: Bash(uv run pt eval run *) Bash(uv run pt score *)
 disable-model-invocation: true
 ---
-# PostTrain AutoResearch — eval
+# PostTrain AutoResearch — evaluation
 
-Parse `$ARGUMENTS`: mode default `dry`; candidate/model is the remaining argument, default `latest`. Set `MODE_FLAG=--dry-run` or `MODE_FLAG=--real`, and `CANDIDATE` to the parsed model/label.
-
-Run:
-
-```bash
-python scripts/pt_eval.py \
-  --config configs/posttrain/current.json \
-  --candidate "$CANDIDATE" \
-  --out outputs/posttrain/evals \
-  "$MODE_FLAG"
-```
-
-Then score if possible:
+Run the selected profile through the CLI. Do not read an external promotion suite directly; the
+CLI verifies its human-registered hash and keeps raw generations in the protected output area.
 
 ```bash
-python scripts/pt_score.py \
-  --config configs/posttrain/current.json \
-  --candidate "$CANDIDATE" \
-  --out outputs/posttrain/score-latest.json \
-  "$MODE_FLAG" || true
+uv run pt eval run --real --allow-gpu --profile "$PROFILE" \
+  --model "$MODEL" --label "$LABEL" --config configs/posttrain/current.json
 ```
 
-Report exact artifact paths and gate implications. Do not promote here.
+Score `dev` against the development baseline for search evidence, or `promotion` against the
+promotion baseline for promotion evidence. Proxy is never scored for promotion.

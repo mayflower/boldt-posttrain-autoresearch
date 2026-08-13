@@ -5,9 +5,11 @@ exact command, commit, environment, inputs, and outputs that produced it. Packag
 from *metadata* (``importlib.metadata``), so collecting env info imports no ML. This mirrors the
 inspiration repo's ``experiment_registry`` but targets the post-training (LoRA/merge/eval) stack.
 """
+
 from __future__ import annotations
 
 import importlib.metadata as ilm
+import hashlib
 import json
 import os
 import platform
@@ -20,19 +22,44 @@ from typing import Any, Dict, List, Optional, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 
-RUN_TYPES = {"data", "baseline", "train_specialist", "train_preference", "train_cpt",
-             "merge", "eval", "promote"}
+RUN_TYPES = {
+    "data",
+    "baseline",
+    "train_specialist",
+    "train_preference",
+    "train_cpt",
+    "train_rlvr",
+    "train_grpo",
+    "merge",
+    "eval",
+    "promote",
+    "search",
+    "failure_mining",
+    "synthesis",
+    "mix_probe",
+    "benchmark",
+}
 REQUIRED_FIELDS = ("run_id", "run_type", "command", "commit", "date")
 
 # Packages that matter for post-training provenance.
-_TRACKED_PKGS = ("torch", "transformers", "trl", "peft", "accelerate", "datasets",
-                 "bitsandbytes", "mergekit", "lm-eval")
+_TRACKED_PKGS = (
+    "torch",
+    "transformers",
+    "trl",
+    "peft",
+    "accelerate",
+    "datasets",
+    "bitsandbytes",
+    "mergekit",
+    "lm-eval",
+)
 
 
 def current_git_commit() -> str:
     try:
-        out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(ROOT), capture_output=True,
-                             text=True, timeout=15)
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(ROOT), capture_output=True, text=True, timeout=15
+        )
         return out.stdout.strip() if out.returncode == 0 else "unknown"
     except Exception:
         return "unknown"
@@ -41,8 +68,9 @@ def current_git_commit() -> str:
 def git(cmd: List[str]) -> str:
     """Run a git subcommand, returning stdout ("" on any failure). Bounded timeout."""
     try:
-        out = subprocess.run(["git"] + cmd, cwd=str(ROOT), capture_output=True,
-                             text=True, timeout=15)
+        out = subprocess.run(
+            ["git"] + cmd, cwd=str(ROOT), capture_output=True, text=True, timeout=15
+        )
         return out.stdout if out.returncode == 0 else ""
     except Exception:
         return ""
@@ -88,12 +116,21 @@ def git_provenance() -> Dict[str, Any]:
     return {"commit": commit, "dirty": bool(status_short.strip()), "status_short": status_short}
 
 
-def new_run_card(run_id: str, run_type: str, command: str, *, model: Optional[str] = None,
-                 dataset: Optional[str] = None, metrics: Optional[Dict[str, Any]] = None,
-                 seed: Optional[int] = None, data_manifest: Optional[str] = None,
-                 input_artifacts: Optional[Sequence[str]] = None,
-                 output_artifacts: Optional[Sequence[str]] = None, notes: str = "",
-                 env: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def new_run_card(
+    run_id: str,
+    run_type: str,
+    command: str,
+    *,
+    model: Optional[str] = None,
+    dataset: Optional[str] = None,
+    metrics: Optional[Dict[str, Any]] = None,
+    seed: Optional[int] = None,
+    data_manifest: Optional[str] = None,
+    input_artifacts: Optional[Sequence[str]] = None,
+    output_artifacts: Optional[Sequence[str]] = None,
+    notes: str = "",
+    env: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     env = env or collect_env_metadata()
     card = {
         "run_id": run_id,
@@ -109,8 +146,10 @@ def new_run_card(run_id: str, run_type: str, command: str, *, model: Optional[st
         "input_artifacts": list(input_artifacts or []),
         "output_artifacts": list(output_artifacts or []),
         "metrics": dict(metrics or {}),
-        "env": {k: env.get(k) for k in
-                ("python", "torch", "transformers", "trl", "peft", "datasets", "mergekit")},
+        "env": {
+            k: env.get(k)
+            for k in ("python", "torch", "transformers", "trl", "peft", "datasets", "mergekit")
+        },
         "notes": notes,
     }
     return card
@@ -139,3 +178,62 @@ def write_run_card(card: Dict[str, Any], out_dir: Path) -> str:
     path = out_dir / "run_card.json"
     path.write_text(json.dumps(card, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(path)
+
+
+def artifact_ref(path: Path) -> Dict[str, Any]:
+    path = Path(path)
+    if not path.is_file():
+        raise ValueError(f"artifact reference requires a file: {path}")
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return {"path": str(path), "sha256": digest.hexdigest(), "bytes": path.stat().st_size}
+
+
+def append_event(path: Path, event: Dict[str, Any]) -> Dict[str, Any]:
+    """Append one canonical hash-linked JSONL event and fsync it before returning."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    previous_hash = "0" * 64
+    sequence = 1
+    if path.exists():
+        with path.open("r", encoding="utf-8") as handle:
+            lines = [line for line in handle if line.strip()]
+        if lines:
+            previous = json.loads(lines[-1])
+            previous_hash = previous["event_hash"]
+            sequence = int(previous["sequence"]) + 1
+    body = {"sequence": sequence, "previous_hash": previous_hash, "recorded_at": now_iso(), **event}
+    encoded = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    document = {**body, "event_hash": hashlib.sha256(encoded.encode()).hexdigest()}
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(document, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return document
+
+
+def validate_event_chain(path: Path) -> List[str]:
+    errors = []
+    previous_hash = "0" * 64
+    expected_sequence = 1
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            document = json.loads(line)
+            actual_hash = document.pop("event_hash", None)
+            encoded = json.dumps(
+                document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            expected_hash = hashlib.sha256(encoded.encode()).hexdigest()
+            if actual_hash != expected_hash:
+                errors.append(f"line {line_number}: event hash mismatch")
+            if document.get("previous_hash") != previous_hash:
+                errors.append(f"line {line_number}: previous hash mismatch")
+            if document.get("sequence") != expected_sequence:
+                errors.append(f"line {line_number}: sequence mismatch")
+            previous_hash = actual_hash
+            expected_sequence += 1
+    return errors

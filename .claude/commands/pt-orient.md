@@ -1,7 +1,7 @@
 ---
 description: Orient to the Boldt German post-training AutoResearch loop and summarize repo readiness
 argument-hint: ""
-allowed-tools: Bash(cat *) Bash(ls *) Bash(test *) Bash(git status *) Bash(python scripts/pt_status.py *) Bash(python scripts/check_posttrain_integrity.py *) Read Glob Grep
+allowed-tools: Bash(git status *) Bash(python scripts/pt_status.py *) Bash(python scripts/check_posttrain_integrity.py *) Glob Grep
 disable-model-invocation: true
 ---
 # PostTrain AutoResearch — orient
@@ -11,9 +11,9 @@ Read `CLAUDE.md`, `AUTORESEARCH_POSTTRAIN.md`, `configs/posttrain/current.json`,
 Then inspect repo readiness:
 
 ```bash
-ls -la .claude/commands configs/posttrain scripts 2>/dev/null || true
-test -f scripts/pt_status.py && python scripts/pt_status.py --format markdown || true
-test -f scripts/check_posttrain_integrity.py && python scripts/check_posttrain_integrity.py --format markdown || true
+ls -la .claude/commands configs/posttrain scripts 2>/dev/null
+test -f scripts/pt_status.py && python scripts/pt_status.py --format markdown
+test -f scripts/check_posttrain_integrity.py && python scripts/check_posttrain_integrity.py --format markdown
 git status --short
 ```
 

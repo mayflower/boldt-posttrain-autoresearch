@@ -4,6 +4,7 @@
 Reports config validity, which canonical scripts exist, which on-disk artifacts are present, and the
 single highest-value NEXT lever — the view ``/pt-orient`` and ``/pt-status`` surface. Never edits.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,10 +21,21 @@ from boldt_posttrain import config as cfgmod  # noqa: E402
 OUT = ROOT / "outputs" / "posttrain"
 
 CANONICAL_SCRIPTS = [
-    "pt_status", "pt_report", "pt_frontier_status", "check_posttrain_integrity",
-    "pt_discover_openeurollm_de", "pt_prepare_openeurollm_de", "pt_baseline",
-    "pt_train_specialist", "pt_train_preference", "pt_train_cpt", "pt_merge_search",
-    "pt_eval", "pt_score", "pt_promote", "pt_log_result",
+    "pt_status",
+    "pt_report",
+    "pt_frontier_status",
+    "check_posttrain_integrity",
+    "pt_discover_openeurollm_de",
+    "pt_prepare_openeurollm_de",
+    "pt_baseline",
+    "pt_train_specialist",
+    "pt_train_preference",
+    "pt_train_cpt",
+    "pt_merge_search",
+    "pt_eval",
+    "pt_score",
+    "pt_promote",
+    "pt_log_result",
 ]
 
 
@@ -40,8 +52,11 @@ def _summary_is_real(rel: str) -> bool:
         doc = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return False
-    return doc.get("mode") == "real" and not doc.get("scale_disclaimer") \
+    return (
+        doc.get("mode") == "real"
+        and not doc.get("scale_disclaimer")
         and doc.get("status") in ("ok", "pass")
+    )
 
 
 def assess(config_path: str) -> Dict[str, Any]:
@@ -50,16 +65,20 @@ def assess(config_path: str) -> Dict[str, Any]:
         "data_manifest": _exists("outputs/posttrain/data/manifest.json"),
         "data_discovery": _exists("outputs/posttrain/data/discovery.json"),
         "leakage_report": _exists("outputs/posttrain/data/leakage_report.json"),
-        "baseline_summary": _exists("outputs/posttrain/baseline/summary.json"),
+        "baseline_summary": _exists("outputs/posttrain/baseline/dev/current.json"),
         "frontier": _exists("outputs/posttrain/frontier.json"),
         "results_tsv": _exists("outputs/posttrain/results.tsv"),
     }
     runs = sorted(p.name for p in (OUT / "runs").glob("*")) if (OUT / "runs").exists() else []
-    evals = sorted(p.name for p in (OUT / "evals").glob("*")
-                   if (p / "summary.json").exists()) if (OUT / "evals").exists() else []
-    baseline_real = _summary_is_real("outputs/posttrain/baseline/summary.json")
-    evals_real = [lbl for lbl in evals
-                  if _summary_is_real(f"outputs/posttrain/evals/{lbl}/summary.json")]
+    evals = (
+        sorted(p.name for p in (OUT / "evals").glob("*") if (p / "summary.json").exists())
+        if (OUT / "evals").exists()
+        else []
+    )
+    baseline_real = _summary_is_real("outputs/posttrain/baseline/dev/current.json")
+    evals_real = [
+        lbl for lbl in evals if _summary_is_real(f"outputs/posttrain/evals/{lbl}/summary.json")
+    ]
 
     cfg_errors: List[str] = []
     try:
@@ -74,8 +93,11 @@ def assess(config_path: str) -> Dict[str, Any]:
     if cfg_errors:
         nxt = "fix configs/posttrain/current.json (see config_errors), then /pt-status"
     elif not all(scripts.values()):
-        nxt = "/pt-bootstrap  (missing scripts: " \
-              + ", ".join(n for n, ok in scripts.items() if not ok) + ")"
+        nxt = (
+            "/pt-bootstrap  (missing scripts: "
+            + ", ".join(n for n, ok in scripts.items() if not ok)
+            + ")"
+        )
     elif not artifacts["data_manifest"]:
         nxt = "/pt-data dry   (no clean German OpenEuroLLM manifest yet)"
     elif not baseline_real:
@@ -118,17 +140,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"- config: `{s['config_path']}` — {'valid' if s['config_valid'] else 'INVALID'}")
     for e in s["config_errors"]:
         print(f"  - ✗ {e}")
-    print(f"- scripts implemented: {s['scripts_present']}/{s['scripts_total']}"
-          + (f" (missing: {', '.join(s['missing_scripts'])})" if s["missing_scripts"] else ""))
+    print(
+        f"- scripts implemented: {s['scripts_present']}/{s['scripts_total']}"
+        + (f" (missing: {', '.join(s['missing_scripts'])})" if s["missing_scripts"] else "")
+    )
     print("- artifacts:")
     for k, v in s["artifacts"].items():
         suffix = ""
         if k == "baseline_summary" and v:
-            suffix = "  (REAL)" if s["baseline_real"] else "  (dry plumbing — not a measured baseline)"
+            suffix = (
+                "  (REAL)" if s["baseline_real"] else "  (dry plumbing — not a measured baseline)"
+            )
         print(f"  - {'✓' if v else '·'} {k}{suffix}")
-    print(f"- runs: {len(s['runs'])}  ·  evaluated candidates: {len(s['evals'])} "
-          f"({len(s['evals_real'])} real)"
-          + (f" — {', '.join(s['evals'])}" if s["evals"] else ""))
+    print(
+        f"- runs: {len(s['runs'])}  ·  evaluated candidates: {len(s['evals'])} "
+        f"({len(s['evals_real'])} real)" + (f" — {', '.join(s['evals'])}" if s["evals"] else "")
+    )
     print(f"\n**Next lever:** {s['next_lever']}")
     return 0
 

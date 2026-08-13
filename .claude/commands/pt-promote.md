@@ -1,7 +1,7 @@
 ---
 description: Check promotion gate for a candidate and update frontier only if all gates pass
 argument-hint: "<candidate-label>"
-allowed-tools: Bash(python scripts/pt_promote.py *) Bash(python scripts/check_posttrain_integrity.py *) Bash(cat *) Bash(git diff *) Read
+allowed-tools: Bash(python scripts/pt_promote.py *) Bash(python scripts/check_posttrain_integrity.py *) Bash(git diff *)
 disable-model-invocation: true
 ---
 # PostTrain AutoResearch — promote

@@ -1,7 +1,7 @@
 ---
 description: Discover and prepare German parts of openeurollm datasets with manifest/license/leakage checks
 argument-hint: "[dry|real]"
-allowed-tools: Bash(python scripts/pt_discover_openeurollm_de.py *) Bash(python scripts/pt_prepare_openeurollm_de.py *) Bash(cat *) Bash(tail *) Bash(ls *) Read Edit
+allowed-tools: Bash(python scripts/pt_discover_openeurollm_de.py *) Bash(python scripts/pt_prepare_openeurollm_de.py *) Edit
 disable-model-invocation: true
 ---
 # PostTrain AutoResearch — data

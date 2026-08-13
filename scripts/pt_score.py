@@ -8,6 +8,7 @@ Dry-run candidates can NEVER pass (their metrics are unmeasured plumbing).
     python scripts/pt_score.py --config configs/posttrain/current.json --candidate my-label \
         --baseline outputs/posttrain/baseline/summary.json --out outputs/posttrain/score-latest.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -21,8 +22,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from boldt_posttrain import config as cfgmod  # noqa: E402
 from boldt_posttrain import scoring  # noqa: E402
+from boldt_posttrain.data_pipeline import verify_hashed_artifact  # noqa: E402
 
-DEFAULT_BASELINE = ROOT / "outputs" / "posttrain" / "baseline" / "summary.json"
+BASELINES = ROOT / "outputs" / "posttrain" / "baseline"
 EVALS = ROOT / "outputs" / "posttrain" / "evals"
 
 
@@ -35,10 +37,16 @@ def _resolve_run(run: Optional[str], candidate: Optional[str]) -> pathlib.Path:
 
 
 def _to_markdown(result, run_path, baseline_path) -> str:
-    lines = [f"# Post-training score: **{result['status']}**", "",
-             f"- score: `{result['score']}`",
-             f"- run: `{run_path}`", f"- baseline: `{baseline_path}`", "",
-             "| delta | value |", "|---|---:|"]
+    lines = [
+        f"# Post-training score: **{result['status']}**",
+        "",
+        f"- score: `{result['score']}`",
+        f"- run: `{run_path}`",
+        f"- baseline: `{baseline_path}`",
+        "",
+        "| delta | value |",
+        "|---|---:|",
+    ]
     for k, v in result["deltas"].items():
         lines.append(f"| {k} | {v} |")
     lines += ["", "| penalty | value |", "|---|---:|"]
@@ -60,7 +68,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
     ap.add_argument("--run", default=None, help="path to a candidate eval summary.json")
     ap.add_argument("--candidate", default=None, help="label under outputs/posttrain/evals/")
-    ap.add_argument("--baseline", default=str(DEFAULT_BASELINE))
+    ap.add_argument("--baseline", default=None)
+    ap.add_argument("--profile", choices=["dev", "promotion"], default="dev")
     ap.add_argument("--out", required=True)
     ap.add_argument("--format", choices=["json", "markdown"], default="json")
     # accepted for command-template compatibility; scoring is deterministic regardless of mode.
@@ -69,24 +78,47 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     run_path = _resolve_run(args.run, args.candidate)
-    baseline_path = pathlib.Path(args.baseline)
+    baseline_path = (
+        pathlib.Path(args.baseline)
+        if args.baseline
+        else (BASELINES / args.profile / "current.json")
+    )
     if not run_path.exists():
-        print(json.dumps({"status": "fail", "error": f"run summary not found: {run_path}"},
-                         ensure_ascii=False))
+        print(
+            json.dumps(
+                {"status": "fail", "error": f"run summary not found: {run_path}"},
+                ensure_ascii=False,
+            )
+        )
         return 2
     if not baseline_path.exists():
-        print(json.dumps({"status": "fail", "error": f"baseline summary not found: {baseline_path} "
-                          "— run /pt-baseline first", "failed_gates": ["baseline_missing"]},
-                         ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "status": "fail",
+                    "error": f"baseline summary not found: {baseline_path} "
+                    "— run /pt-baseline first",
+                    "failed_gates": ["baseline_missing"],
+                },
+                ensure_ascii=False,
+            )
+        )
         return 2
 
     run = json.loads(run_path.read_text(encoding="utf-8"))
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    if not verify_hashed_artifact(run) or not verify_hashed_artifact(baseline):
+        print(json.dumps({"status": "fail", "error": "summary artifact hash invalid"}))
+        return 5
+    if run.get("profile") != args.profile or baseline.get("profile") != args.profile:
+        print(json.dumps({"status": "fail", "error": "run and baseline profile mismatch"}))
+        return 2
     try:
         cfg = cfgmod.resolve_config(pathlib.Path(args.config))
         thresholds = scoring.thresholds_from_config(cfg)
-    except Exception:
-        thresholds = {}
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(json.dumps({"status": "fail", "error": f"config resolution failed: {exc}"}))
+        return 5
 
     result = scoring.score_run(run, baseline, thresholds)
     result["inputs"] = {"run": str(run_path), "baseline": str(baseline_path)}
@@ -98,9 +130,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.format == "markdown":
         print(_to_markdown(result, run_path, baseline_path))
     else:
-        print(json.dumps({"status": result["status"], "score": result["score"],
-                          "failed_gates": [g["name"] for g in result["failed_gates"]]},
-                         ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "status": result["status"],
+                    "score": result["score"],
+                    "failed_gates": [g["name"] for g in result["failed_gates"]],
+                },
+                ensure_ascii=False,
+            )
+        )
     return 0 if result["status"] == "pass" else 1
 
 

@@ -7,5 +7,23 @@ is imported lazily inside ``--real`` code paths only; importing this package pul
 beyond the standard library.
 """
 
-__all__ = ["config", "provenance", "scoring", "recipe", "frontier"]
-__version__ = "0.1.0"
+__all__ = [
+    "bootstrap",
+    "config",
+    "data_pipeline",
+    "distillation",
+    "evaluation",
+    "failure_mining",
+    "frontier",
+    "merge",
+    "preference",
+    "provenance",
+    "recipe",
+    "rewards",
+    "rlvr",
+    "verified_rl",
+    "scheduler",
+    "scoring",
+    "training",
+]
+__version__ = "0.2.0"

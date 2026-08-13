@@ -1,4 +1,5 @@
 """pt_loop deterministic iteration: dry/missing-baseline runs are never promotable (unittest)."""
+
 import contextlib
 import importlib.util
 import io
@@ -30,10 +31,21 @@ class TestLoop(unittest.TestCase):
     def test_dry_run_is_not_promotable(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
-            rc, verdict = _run(["--candidate", "baseline-seed", "--label", "t-dry",
-                                "--evals-out", str(tmp / "evals"),
-                                "--results", str(tmp / "results.tsv"),
-                                "--baseline", str(tmp / "no-baseline.json"), "--dry-run"])
+            rc, verdict = _run(
+                [
+                    "--candidate",
+                    "baseline-seed",
+                    "--label",
+                    "t-dry",
+                    "--evals-out",
+                    str(tmp / "evals"),
+                    "--results",
+                    str(tmp / "results.tsv"),
+                    "--baseline",
+                    str(tmp / "no-baseline.json"),
+                    "--dry-run",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertFalse(verdict["promotable"])
         self.assertEqual(verdict["mode"], "dry_run")
@@ -43,11 +55,21 @@ class TestLoop(unittest.TestCase):
     def test_missing_baseline_skips_score_and_blocks_promotion(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
-            rc, verdict = _run(["--label", "t-nob", "--evals-out", str(tmp / "evals"),
-                                "--results", str(tmp / "results.tsv"),
-                                "--baseline", str(tmp / "missing.json"), "--dry-run"])
+            rc, verdict = _run(
+                [
+                    "--label",
+                    "t-nob",
+                    "--evals-out",
+                    str(tmp / "evals"),
+                    "--results",
+                    str(tmp / "results.tsv"),
+                    "--baseline",
+                    str(tmp / "missing.json"),
+                    "--dry-run",
+                ]
+            )
         self.assertEqual(rc, 1)
-        self.assertIsNone(verdict["score_status"])      # score skipped (no baseline)
+        self.assertIsNone(verdict["score_status"])  # score skipped (no baseline)
         self.assertFalse(verdict["baseline_present"])
         self.assertFalse(verdict["promotable"])
 

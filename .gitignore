@@ -27,6 +27,7 @@ wandb/
 *.gguf
 adapter_model.*
 outputs/posttrain/checkpoints/
+outputs/posttrain/cache/
 
 # Hugging Face / datasets caches
 .cache/
@@ -48,6 +49,8 @@ outputs/posttrain/runs/**/*.jsonl
 outputs/posttrain/runs/**/*.log
 outputs/posttrain/merge/**/*.jsonl
 outputs/posttrain/evals/**/*.jsonl
+# Raw generations can contain external promotion-holdout content and never enter Git.
+outputs/posttrain/**/protected/
 outputs/posttrain/**/*.npy
 outputs/posttrain/**/*.parquet
 outputs/posttrain/**/*.arrow

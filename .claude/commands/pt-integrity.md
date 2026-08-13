@@ -1,7 +1,7 @@
 ---
 description: Check protected surfaces and git cleanliness for the post-training loop
 argument-hint: "[--base-ref REF]"
-allowed-tools: Bash(python scripts/check_posttrain_integrity.py *) Bash(git status *) Bash(git diff *) Bash(git diff --name-only *) Read
+allowed-tools: Bash(python scripts/check_posttrain_integrity.py *) Bash(git status *) Bash(git diff *) Bash(git diff --name-only *)
 disable-model-invocation: true
 ---
 # PostTrain AutoResearch — integrity
@@ -9,7 +9,7 @@ disable-model-invocation: true
 Run:
 
 ```bash
-python scripts/check_posttrain_integrity.py --format markdown $ARGUMENTS || true
+python scripts/check_posttrain_integrity.py --format markdown $ARGUMENTS
 git status --short
 git diff --name-only
 ```

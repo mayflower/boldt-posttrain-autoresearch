@@ -9,6 +9,7 @@ it never fabricates a checkpoint or metrics.
     python scripts/pt_train_specialist.py --config configs/posttrain/current.json \
         --specialist general-de --out outputs/posttrain/runs --budget-minutes 90 --dry-run
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,6 +38,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--real", action="store_true")
     ap.add_argument("--allow-gpu", action="store_true")
     ap.add_argument("--allow-checkpoints", action="store_true")
+    ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--mix-plan", default=None, help="path to a verified mix_plan.json")
     args = ap.parse_args(argv)
 
     if args.real and args.dry_run:
@@ -47,10 +50,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     cfg = cfgmod.resolve_config(pathlib.Path(args.config))
     specialist = args.specialist or cfg.get("training", {}).get("specialist") or "general-de"
     return training.run_training_trial(
-        cfg=cfg, kind="specialist", specialist=specialist, out_root=pathlib.Path(args.out),
-        budget_minutes=args.budget_minutes, argv=argv, dry_run=dry, allow_gpu=args.allow_gpu,
-        allow_checkpoints=args.allow_checkpoints, data_dir=pathlib.Path(args.data),
-        config_errors=cfgmod.validate_config_dict(cfg))
+        cfg=cfg,
+        kind="specialist",
+        specialist=specialist,
+        out_root=pathlib.Path(args.out),
+        budget_minutes=args.budget_minutes,
+        argv=argv,
+        dry_run=dry,
+        allow_gpu=args.allow_gpu,
+        allow_checkpoints=args.allow_checkpoints,
+        data_dir=pathlib.Path(args.data),
+        config_errors=cfgmod.validate_config_dict(cfg),
+        device=args.device,
+        mix_plan=pathlib.Path(args.mix_plan) if args.mix_plan else None,
+    )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 """Fail-closed behaviour of the protected scorer (pure stdlib unittest)."""
+
 import copy
 import pathlib
 import sys
@@ -12,11 +13,20 @@ from boldt_posttrain import scoring  # noqa: E402
 
 def _baseline():
     return {
-        "status": "ok", "mode": "real",
+        "status": "ok",
+        "mode": "real",
+        "profile": "dev",
+        "technical_error_count": 0,
         "metrics": {
-            "german_instruction": 0.75, "format_following": 0.90, "reasoning_core": 0.60,
-            "english_bleed_rate": 0.01, "empty_output_rate": 0.00, "refusal_rate": 0.10,
-            "over_refusal_rate": 0.02, "safety": 0.95,
+            "german_instruction": 0.75,
+            "format_following": 0.90,
+            "reasoning_core": 0.60,
+            "english_bleed_rate": 0.01,
+            "empty_output_rate": 0.00,
+            "refusal_rate": 0.10,
+            "over_refusal_rate": 0.02,
+            "safety": 0.95,
+            "german_language_retention": 0.99,
             "lm_eval": {"arc_de": 0.50, "hellaswag_de": 0.60},
             "leakage": {"status": "clean", "hits": 0},
             "license": {"status": "apache-2.0", "usable": True},

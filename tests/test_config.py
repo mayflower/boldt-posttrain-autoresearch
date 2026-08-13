@@ -1,4 +1,5 @@
 """Config inheritance + validation (pure stdlib unittest)."""
+
 import pathlib
 import sys
 import unittest
@@ -14,9 +15,9 @@ class TestConfig(unittest.TestCase):
         cfg = cfgmod.resolve_config(cfgmod.DEFAULT_CONFIG)
         # current.json declares extends -> base.json keys must be present after the merge.
         self.assertEqual(cfg.get("_extends"), "configs/posttrain/base.json")
-        self.assertIn("paths", cfg)        # from base.json
-        self.assertIn("integrity", cfg)    # from base.json
-        self.assertIn("training", cfg)     # from current.json
+        self.assertIn("paths", cfg)  # from base.json
+        self.assertIn("integrity", cfg)  # from base.json
+        self.assertIn("training", cfg)  # from current.json
 
     def test_resolved_current_is_valid(self):
         cfg = cfgmod.resolve_config(cfgmod.DEFAULT_CONFIG)
@@ -34,6 +35,20 @@ class TestConfig(unittest.TestCase):
         errors = cfgmod.validate_config_dict({"training": {}})
         self.assertTrue(any("base_model" in e for e in errors))
         self.assertTrue(any("data" in e for e in errors))
+
+    def test_current_dolci_source_is_exactly_policy_allowed(self):
+        cfg = cfgmod.resolve_config(cfgmod.DEFAULT_CONFIG)
+        source = cfg["data"]["sources"][0]
+        allowed = cfg["data"]["allowed_sources"][0]
+        self.assertEqual(source["dataset"], "allenai/Dolci-Instruct-SFT")
+        self.assertEqual(source["revision"], allowed["revision"])
+        self.assertEqual(source["license"], "odc-by")
+
+    def test_unpinned_or_unapproved_explicit_source_is_rejected(self):
+        cfg = cfgmod.resolve_config(cfgmod.DEFAULT_CONFIG)
+        cfg["data"]["sources"][0]["revision"] = "moving-main"
+        errors = cfgmod.validate_config_dict(cfg)
+        self.assertTrue(any("not policy-allowed" in error for error in errors))
 
 
 if __name__ == "__main__":

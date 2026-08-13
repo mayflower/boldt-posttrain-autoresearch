@@ -1,33 +1,17 @@
 ---
-description: Establish or inspect baseline eval for the seed model
-argument-hint: "[dry|real]"
-allowed-tools: Bash(python scripts/pt_baseline.py *) Bash(python scripts/pt_eval.py *) Bash(cat *) Bash(ls *) Read
+description: Establish an immutable real development or promotion baseline
+argument-hint: "dev|promotion [--device cuda:N] [--budget-minutes N]"
+allowed-tools: Bash(uv run pt baseline run *)
 disable-model-invocation: true
 ---
 # PostTrain AutoResearch — baseline
 
-Parse `$ARGUMENTS`: mode is `dry` by default; `real` only if explicitly present. Use `MODE_FLAG=--dry-run` for dry mode and `MODE_FLAG=--real` for real mode when running shell examples.
-
-Seed model is read from `configs/posttrain/current.json`.
-
-Run:
+Use `dev` unless `promotion` is explicitly requested. Promotion suite contents are read only by
+the baseline CLI through the registered hash and `BOLDT_PROMOTION_SUITE`.
 
 ```bash
-python scripts/pt_baseline.py \
-  --config configs/posttrain/current.json \
-  --out outputs/posttrain/baseline \
-  "$MODE_FLAG"
+uv run pt baseline run --real --allow-gpu \
+  --config configs/posttrain/current.json --profile "$PROFILE" "$ARGUMENTS"
 ```
 
-If `pt_baseline.py` is not implemented but `pt_eval.py` is, evaluate the seed model directly:
-
-```bash
-python scripts/pt_eval.py \
-  --config configs/posttrain/current.json \
-  --model mayflowergmbh/boldt-dc-1b-german-it-16k-dpo \
-  --label baseline-seed \
-  --out outputs/posttrain/baseline \
-  "$MODE_FLAG"
-```
-
-Report the artifact paths and explicitly mark dry-run outputs as plumbing only.
+The command never replaces an existing immutable baseline pointer.

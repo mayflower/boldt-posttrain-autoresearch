@@ -1,0 +1,11 @@
+{
+  "extends": "configs/posttrain/experiments/dolci-sft-full-loss-smoke.json",
+  "experiment": {
+    "name": "dolci-sft-liger-smoke",
+    "hypothesis": "Measure Liger against the full-sequence SFT control at an equal step budget.",
+    "lever": "sft"
+  },
+  "training": {
+    "use_liger_kernel": true
+  }
+}

@@ -6,6 +6,7 @@ aggregate per candidate, the current frontier-best (real runs only), and the per
 — i.e. which complementary specialists are worth MERGING. Never trains, never claims beyond saved
 summaries. ``scripts/pt_promote.py`` is the actual gate that writes ``frontier.json``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,23 +37,31 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     print("# Post-training frontier — German-helpfulness aggregate (saved eval summaries)\n")
     if view["n_candidates"] == 0:
-        print("No eval summaries yet under outputs/posttrain/evals/. "
-              "Run /pt-baseline then /pt-eval.")
+        print(
+            "No eval summaries yet under outputs/posttrain/evals/. Run /pt-baseline then /pt-eval."
+        )
         return 0
     print("| candidate | mode | agg | " + " | ".join(fr.DIMS) + " |")
     print("|---|---|---:|" + "---:|" * len(fr.DIMS))
     for c in view["candidates"]:
-        print(f"| {c['label']} | {c['mode']} | {f(c['aggregate'])} | "
-              + " | ".join(f(c["dims"].get(d)) for d in fr.DIMS) + " |")
+        print(
+            f"| {c['label']} | {c['mode']} | {f(c['aggregate'])} | "
+            + " | ".join(f(c["dims"].get(d)) for d in fr.DIMS)
+            + " |"
+        )
     best = view["frontier_best"]
     if best:
         print(f"\nFrontier-best (real): `{best['label']}` agg {f(best['aggregate'])}")
     else:
-        print("\nNo REAL evaluated candidate yet — frontier-best is undefined "
-              "(dry-run candidates never rank).")
+        print(
+            "\nNo REAL evaluated candidate yet — frontier-best is undefined "
+            "(dry-run candidates never rank)."
+        )
     if len(view["complementary_merge_inputs"]) >= 2:
-        print("\n→ Complementary checkpoints to MERGE: "
-              + ", ".join("`" + d + "`" for d in view["complementary_merge_inputs"]))
+        print(
+            "\n→ Complementary checkpoints to MERGE: "
+            + ", ".join("`" + d + "`" for d in view["complementary_merge_inputs"])
+        )
     return 0
 
 

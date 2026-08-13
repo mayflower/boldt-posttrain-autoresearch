@@ -5,6 +5,7 @@ Stable columns; header written only when the file is new; old rows are never rew
 directory containing ``summary.json`` (eval) or ``run_card.json``/``metrics.json``, plus an optional
 ``score.json``. This is the loop's append-only audit log.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,10 +18,24 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_RESULTS = ROOT / "outputs" / "posttrain" / "results.tsv"
 
 COLUMNS = [
-    "timestamp_utc", "commit", "label", "mode", "status", "score",
-    "german_instruction", "format_following", "reasoning_core", "longcontext",
-    "english_bleed_rate", "empty_output_rate", "refusal_rate", "safety",
-    "leakage_status", "license_status", "config_path", "notes",
+    "timestamp_utc",
+    "commit",
+    "label",
+    "mode",
+    "status",
+    "score",
+    "german_instruction",
+    "format_following",
+    "reasoning_core",
+    "longcontext",
+    "english_bleed_rate",
+    "empty_output_rate",
+    "refusal_rate",
+    "safety",
+    "leakage_status",
+    "license_status",
+    "config_path",
+    "notes",
 ]
 
 
@@ -51,9 +66,13 @@ def _load(run_dir: pathlib.Path) -> Optional[Dict[str, Any]]:
     return None
 
 
-def build_row(doc: Dict[str, Any], score_doc: Optional[Dict[str, Any]],
-              status_override: Optional[str], notes: Optional[str],
-              timestamp_utc: str) -> Dict[str, str]:
+def build_row(
+    doc: Dict[str, Any],
+    score_doc: Optional[Dict[str, Any]],
+    status_override: Optional[str],
+    notes: Optional[str],
+    timestamp_utc: str,
+) -> Dict[str, str]:
     m = doc.get("metrics", {}) if isinstance(doc.get("metrics"), dict) else {}
     status = status_override or (score_doc or {}).get("status") or doc.get("status")
     row = {
@@ -90,19 +109,30 @@ def append_row(results_path: pathlib.Path, row: Dict[str, str]) -> None:
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--run", required=True, help="run dir with summary.json/run_card.json/metrics.json")
+    ap.add_argument(
+        "--run", required=True, help="run dir with summary.json/run_card.json/metrics.json"
+    )
     ap.add_argument("--results", default=str(DEFAULT_RESULTS))
-    ap.add_argument("--status", default=None,
-                    help="override disposition: keep|discard|crash|invalid_leakage|needs_real")
+    ap.add_argument(
+        "--status",
+        default=None,
+        help="override disposition: keep|discard|crash|invalid_leakage|needs_real",
+    )
     ap.add_argument("--notes", default=None)
     args = ap.parse_args(argv)
 
     run_dir = pathlib.Path(args.run)
     doc = _load(run_dir)
     if doc is None:
-        print(json.dumps({"appended": False,
-                          "error": f"no summary.json/run_card.json/metrics.json under {run_dir}"},
-                         ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "appended": False,
+                    "error": f"no summary.json/run_card.json/metrics.json under {run_dir}",
+                },
+                ensure_ascii=False,
+            )
+        )
         return 2
     score_path = run_dir / "score.json"
     score_doc = json.loads(score_path.read_text(encoding="utf-8")) if score_path.exists() else None
@@ -110,8 +140,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     ts = dt.datetime.now(dt.timezone.utc).isoformat()
     row = build_row(doc, score_doc, args.status, args.notes, ts)
     append_row(pathlib.Path(args.results), row)
-    print(json.dumps({"appended": True, "label": row["label"], "status": row["status"],
-                      "score": row["score"], "results": args.results}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "appended": True,
+                "label": row["label"],
+                "status": row["status"],
+                "score": row["score"],
+                "results": args.results,
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 

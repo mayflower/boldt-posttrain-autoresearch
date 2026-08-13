@@ -10,6 +10,7 @@ classifies the changed paths (from ``git status``, optionally also everything co
 The editable/protected globs are read from ``configs/posttrain/base.json`` (single source of truth,
 itself protected), so this guard and the documented policy can never drift apart.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,12 +24,22 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = ROOT / "configs" / "posttrain" / "base.json"
 
 # Fallback globs if base.json is unreadable (fail-closed: still protect the critical surfaces).
-_FALLBACK_EDITABLE = ["configs/posttrain/current.json", "configs/posttrain/experiments/*.json",
-                      "docs/experiments/*.md"]
-_FALLBACK_PROTECTED = ["data/eval/**", "scripts/pt_eval.py", "scripts/pt_score.py",
-                       "scripts/pt_promote.py", "scripts/check_posttrain_integrity.py",
-                       "src/boldt_posttrain/scoring.py", "outputs/posttrain/baseline/**",
-                       "CLAUDE.md", "AUTORESEARCH_POSTTRAIN.md"]
+_FALLBACK_EDITABLE = [
+    "configs/posttrain/current.json",
+    "configs/posttrain/experiments/*.json",
+    "docs/experiments/*.md",
+]
+_FALLBACK_PROTECTED = [
+    "data/eval/**",
+    "scripts/pt_eval.py",
+    "scripts/pt_score.py",
+    "scripts/pt_promote.py",
+    "scripts/check_posttrain_integrity.py",
+    "src/boldt_posttrain/scoring.py",
+    "outputs/posttrain/baseline/**",
+    "CLAUDE.md",
+    "AUTORESEARCH_POSTTRAIN.md",
+]
 
 
 def load_globs() -> Dict[str, List[str]]:
@@ -84,15 +95,23 @@ def classify_paths(paths: List[str], globs: Dict[str, List[str]]) -> Dict[str, L
             protected.append(p)
         else:
             other.append(p)
-    return {"editable": sorted(set(editable)), "protected": sorted(set(protected)),
-            "other": sorted(set(other))}
+    return {
+        "editable": sorted(set(editable)),
+        "protected": sorted(set(protected)),
+        "other": sorted(set(other)),
+    }
 
 
 def _porcelain_paths() -> List[str]:
     paths: List[str] = []
     try:
-        out = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
-                             capture_output=True, text=True, timeout=15)
+        out = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
     except Exception:
         return paths
     for line in out.stdout.splitlines():
@@ -111,34 +130,55 @@ def changed_paths(base_ref: Optional[str] = None) -> List[str]:
     paths = _porcelain_paths()
     if base_ref:
         try:
-            out = subprocess.run(["git", "diff", "--name-only", base_ref], cwd=str(ROOT),
-                                 capture_output=True, text=True, timeout=20)
+            out = subprocess.run(
+                ["git", "diff", "--name-only", base_ref],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
             if out.returncode == 0:
                 paths += [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
-        except Exception:
-            pass
+            else:
+                raise RuntimeError(f"could not compare protected paths to {base_ref}: {out.stderr}")
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"could not compare protected paths to {base_ref}: {exc}") from exc
     return paths
 
 
-def evaluate(paths: List[str], strict: bool = False,
-             globs: Optional[Dict[str, List[str]]] = None) -> Dict[str, object]:
+def evaluate(
+    paths: List[str], strict: bool = False, globs: Optional[Dict[str, List[str]]] = None
+) -> Dict[str, object]:
     cls = classify_paths(paths, globs or load_globs())
     violations = list(cls["protected"])
     if strict:
         violations += cls["other"]
-    return {"status": "pass" if not violations else "fail",
-            "violations": sorted(set(violations)), **cls}
+    return {
+        "status": "pass" if not violations else "fail",
+        "violations": sorted(set(violations)),
+        **cls,
+    }
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--paths", nargs="*", default=None,
-                    help="explicit changed paths to check (default: read from git)")
-    ap.add_argument("--base-ref", default=None,
-                    help="also vet everything committed since this ref (e.g. the loop's start "
-                         "commit) so committing a protected edit cannot bypass the gate")
-    ap.add_argument("--strict", action="store_true",
-                    help="also fail if anything other than the editable surface changed")
+    ap.add_argument(
+        "--paths",
+        nargs="*",
+        default=None,
+        help="explicit changed paths to check (default: read from git)",
+    )
+    ap.add_argument(
+        "--base-ref",
+        default=None,
+        help="also vet everything committed since this ref (e.g. the loop's start "
+        "commit) so committing a protected edit cannot bypass the gate",
+    )
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="also fail if anything other than the editable surface changed",
+    )
     ap.add_argument("--format", choices=["json", "markdown", "text"], default="text")
     args = ap.parse_args(argv)
 

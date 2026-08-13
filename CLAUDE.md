@@ -10,9 +10,14 @@ This repo is an **orchestration/scaffolding pack**, not a conventional code proj
 
 - `.claude/commands/pt-*.md` — slash commands that are the operator/agent interface. Each is `disable-model-invocation: true` (must be invoked explicitly), has narrow `allowed-tools`, and calls Python scripts **by contract** rather than embedding logic.
 - `scripts/pt_*.py` + `scripts/check_posttrain_integrity.py` — thin CLIs the commands call. Their I/O shapes, required artifacts, and common flags are specified in `docs/posttrain-script-contracts.md`. They are **dry-run-first**: dry mode is pure stdlib and writes the contracted artifacts as unmeasured plumbing; `--real` paths gate on `--allow-gpu` + the optional ML stack and **fail closed** (never fabricate metrics) where the concrete trainer/eval is not yet implemented. `scripts/pt_loop.py` is the deterministic, non-agent iteration (eval → score → log → integrity → one machine-readable verdict, exit 0 only if promotable) — the scriptable CI-gate counterpart to the agent-driven `/pt-run`.
-- `src/boldt_posttrain/` — the shared, stdlib-only engine the scripts import so logic lives in one auditable place: `config.py` (`extends`/deep-merge + validation), `provenance.py` (git/env/run cards), `recipe.py` (metrics skeleton + run-dir provenance + the `--real` gate), `scoring.py` (**protected** — the deterministic score + fail-closed gates), `training.py` (shared train-lever skeleton), `frontier.py` (read-only frontier view), `cli.py` (console entry points).
+- `src/boldt_posttrain/` — the shared engine: `data_pipeline.py` owns canonical rows,
+  sampling, splits, and manifest verification; `training.py` and `preference.py` own the
+  single TRL/PEFT training path; `verified_rl.py` is the sole verified-math GRPO operator;
+  provenance, scoring, evaluation, and promotion retain their existing artifact contracts.
 - `configs/posttrain/` — `base.json` (protected defaults + the integrity globs that `check_posttrain_integrity.py` reads), `current.json` (the live experiment; `extends` base.json — readers must merge base then overlay current), `experiments/*.json` (named overlays preserving past hypotheses). The loop edits `current.json` and `experiments/*`.
-- `pyproject.toml` / `tests/` — the core + all gates run on stdlib only; heavy ML is optional: `pip install -e '.[train,eval,merge,data]'` (only needed for `--real`). `tests/` is a stdlib `unittest` suite (`python -m unittest discover -s tests`) covering scoring gates, config inheritance, and integrity classification. There is **no Makefile**: the `/pt-*` slash commands invoking `python scripts/pt_*.py` are the only interface.
+- `pyproject.toml` / `tests/` — heavy ML remains optional through the `train`, `perf`,
+  `rl`, `eval`, `merge`, and `data` extras. The pytest suite includes real local
+  tiny-model trainer/save/reload integration tests. There is no Makefile.
 - `outputs/posttrain/` — **all run state.** The loop is stateless except for these on-disk artifacts (`data/manifest.json`, `baseline/summary.json`, `runs/<id>/run_card.json`, `evals/<label>/summary.json`, `frontier.json`, `results.tsv`). There is no hidden controller or private state file.
 
 `AUTORESEARCH_POSTTRAIN.md` is the full operating manual (data policy, lever menu, specialist taxonomy, merge policy, eval gate, scoring formula). Read it before changing loop behavior.
@@ -45,7 +50,10 @@ To operate the loop you only need two: a read (`/pt-orient` or `/pt-status`) + `
 ## Current repository state
 
 - **All 15 canonical `scripts/pt_*.py` + `check_posttrain_integrity.py` are implemented** in the dry-run-first style above (modelled on the mature `boldt-embed-de` loop). The whole dry loop runs end to end on pure stdlib via the `/pt-*` commands (each calling `python scripts/pt_*.py`); the 16-test `unittest` suite passes.
-- **`--real` is wired but intentionally fail-closed**: real data discovery/prepare, baseline/eval (German-core harness), training (LoRA/QLoRA/DPO/CPT), and merge (mergekit) require `--allow-gpu` + the optional extras and currently exit nonzero with an actionable message via `recipe.real_not_implemented(...)`. Implement each per `docs/posttrain-script-contracts.md` — and only there — when bringing real GPU runs online; never make a `--real` path fabricate metrics or a "clean" leakage/license status.
+- **`--real` is implemented and fail-closed** for data preparation, LoRA/QLoRA SFT/CPT,
+  DPO/KTO/ORPO, verified-math GRPO, evaluation, and merge. Training requires verified data
+  shards, explicit GPU/checkpoint permission, validation evidence, and a fresh checkpoint reload.
+  Never fabricate metrics or a clean leakage/license status.
 - **The repo is git-initialized** (branch `master`). On a fresh repo with nothing committed, `check_posttrain_integrity.py` flags every untracked file — including the protected `CLAUDE.md`/baseline — so it reports FAIL until there is a clean committed baseline; that is expected, not a bug.
 - Quick validate: `python -m py_compile scripts/pt_*.py scripts/check_posttrain_integrity.py && python -m unittest discover -s tests && python scripts/pt_status.py --format markdown`. (The "Validation before any milestone claim" section below covers milestone-level checks.)
 

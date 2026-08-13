@@ -17,6 +17,7 @@ can never be promotable (fail-closed), mirroring the embed loop's ``ar_loop.py``
     python scripts/pt_loop.py --real --allow-gpu --model outputs/posttrain/checkpoints/<run> \
         --label cand-1 --baseline outputs/posttrain/baseline/summary.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,7 +35,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from boldt_posttrain import provenance as prov  # noqa: E402
 
 EVALS = ROOT / "outputs" / "posttrain" / "evals"
-DEFAULT_BASELINE = ROOT / "outputs" / "posttrain" / "baseline" / "summary.json"
+DEFAULT_BASELINE = ROOT / "outputs" / "posttrain" / "baseline" / "dev" / "current.json"
 DEFAULT_RESULTS = ROOT / "outputs" / "posttrain" / "results.tsv"
 
 
@@ -70,12 +71,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--baseline", default=str(DEFAULT_BASELINE))
     ap.add_argument("--results", default=str(DEFAULT_RESULTS))
     ap.add_argument("--budget-minutes", type=int, default=90)
+    ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--real", action="store_true")
     ap.add_argument("--allow-gpu", action="store_true")
-    ap.add_argument("--base-ref", default=None,
-                    help="loop start commit; passed to integrity so committed protected edits "
-                         "are caught")
+    ap.add_argument(
+        "--base-ref",
+        default=None,
+        help="loop start commit; passed to integrity so committed protected edits are caught",
+    )
     ap.add_argument("--status", default="keep", help="results.tsv disposition for this row")
     ap.add_argument("--notes", default="pt_loop iteration")
     args = ap.parse_args(argv)
@@ -96,7 +100,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     integ = _load("check_posttrain_integrity")
 
     # 1) trial = evaluate the candidate/model -------------------------------------------------
-    eval_argv = ["--config", args.config, "--out", str(evals_out), "--label", label, mode_flag]
+    eval_argv = [
+        "--config",
+        args.config,
+        "--out",
+        str(evals_out),
+        "--label",
+        label,
+        "--device",
+        args.device,
+        "--budget-minutes",
+        str(args.budget_minutes),
+        mode_flag,
+    ]
     if args.model:
         eval_argv += ["--model", args.model]
     if args.candidate:
@@ -106,10 +122,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     eval_rc = _quiet(pt_eval.main, eval_argv)
 
     if not summary_path.exists():
-        print(json.dumps({"label": label, "stage": "eval", "eval_rc": eval_rc,
-                          "error": f"no summary.json at {summary_path} — eval failed before "
-                                   "writing output", "promotable": False}, ensure_ascii=False,
-                         indent=2))
+        print(
+            json.dumps(
+                {
+                    "label": label,
+                    "stage": "eval",
+                    "eval_rc": eval_rc,
+                    "error": f"no summary.json at {summary_path} — eval failed before "
+                    "writing output",
+                    "promotable": False,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return eval_rc or 1
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
@@ -117,25 +143,51 @@ def main(argv: Optional[List[str]] = None) -> int:
     score_doc: Optional[Dict[str, Any]] = None
     baseline = pathlib.Path(args.baseline)
     if baseline.exists():
-        _quiet(pt_score.main, ["--config", args.config, "--run", str(summary_path),
-                               "--baseline", str(baseline), "--out", str(out_dir / "score.json"),
-                               "--format", "json"])
+        _quiet(
+            pt_score.main,
+            [
+                "--config",
+                args.config,
+                "--run",
+                str(summary_path),
+                "--baseline",
+                str(baseline),
+                "--out",
+                str(out_dir / "score.json"),
+                "--format",
+                "json",
+            ],
+        )
         sp = out_dir / "score.json"
         if sp.exists():
             score_doc = json.loads(sp.read_text(encoding="utf-8"))
 
     # 3) log one auditable row ----------------------------------------------------------------
-    _quiet(pt_log.main, ["--run", str(out_dir), "--results", args.results,
-                         "--status", args.status, "--notes", args.notes])
+    _quiet(
+        pt_log.main,
+        [
+            "--run",
+            str(out_dir),
+            "--results",
+            args.results,
+            "--status",
+            args.status,
+            "--notes",
+            args.notes,
+        ],
+    )
 
     # 4) integrity (read the structured result directly) --------------------------------------
     integ_result = integ.evaluate(integ.changed_paths(args.base_ref))
 
-    promotable = (summary.get("status") in ("ok", "pass")
-                  and not summary.get("scale_disclaimer")
-                  and summary.get("mode") == "real"
-                  and integ_result["status"] == "pass"
-                  and score_doc is not None and score_doc.get("status") == "pass")
+    promotable = (
+        summary.get("status") in ("ok", "pass")
+        and not summary.get("scale_disclaimer")
+        and summary.get("mode") == "real"
+        and integ_result["status"] == "pass"
+        and score_doc is not None
+        and score_doc.get("status") == "pass"
+    )
 
     verdict = {
         "label": label,

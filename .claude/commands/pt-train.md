@@ -1,7 +1,7 @@
 ---
 description: Train one LoRA/QLoRA specialist branch from the Boldt warm start
 argument-hint: "[dry|real] [general-de|reasoning-de|coding-de|safety-de|longcontext-de|raw-quality-de]"
-allowed-tools: Bash(python scripts/pt_train_specialist.py *) Bash(python scripts/pt_train_cpt.py *) Bash(python scripts/pt_train_preference.py *) Bash(python scripts/pt_eval.py *) Bash(python scripts/check_posttrain_integrity.py *) Bash(cat *) Read Edit
+allowed-tools: Bash(python scripts/pt_train_specialist.py *) Bash(python scripts/pt_train_cpt.py *) Bash(python scripts/pt_train_preference.py *) Bash(python scripts/pt_eval.py *) Bash(python scripts/check_posttrain_integrity.py *) Edit
 disable-model-invocation: true
 ---
 # PostTrain AutoResearch — train specialist
@@ -41,7 +41,7 @@ For `raw-quality-de`, use `pt_train_cpt.py`. For `preference-de`, use `pt_train_
 If a candidate checkpoint/adaptor is produced, evaluate it:
 
 ```bash
-python scripts/pt_eval.py --config configs/posttrain/current.json --candidate latest --out outputs/posttrain/evals "$MODE_FLAG" || true
+python scripts/pt_eval.py --config configs/posttrain/current.json --candidate latest --out outputs/posttrain/evals "$MODE_FLAG"
 ```
 
 Run integrity and report artifacts. Never call a dry-run metric a quality result.
