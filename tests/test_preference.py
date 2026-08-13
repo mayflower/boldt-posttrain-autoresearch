@@ -1,96 +1,238 @@
 from pathlib import Path
 
 import pytest
-from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from boldt_posttrain.policy import load_policy
 from boldt_posttrain.preference import (
-    PreferenceError,
-    preference_dataset,
-    train_preference_adapter,
+    normalize_preference_row,
+    render_probe,
+    train_preference,
     validate_preference_rows,
 )
-from tests.test_training_preflight import experiment
-from tests.tiny_model import build_tiny_model
+from boldt_posttrain.training import make_peft_config
 
 
-def preference_settings() -> dict:
-    return {
-        "method": "dpo",
-        "loss_type": "sigmoid",
-        "beta": 0.1,
-        "rpo_alpha": 0.0,
-        "length_ratio_max": 3.0,
-        "max_prompt_length": 32,
-        "max_completion_length": 16,
-    }
+class Tokenizer:
+    def apply_chat_template(self, messages, **_kwargs):
+        return "|".join(f"{m['role']}:{m['content']}" for m in messages)
 
 
-def rows() -> list[dict[str, str]]:
-    return [
-        {"prompt": "Hallo", "chosen": "Buch", "rejected": "Regen"},
-        {"prompt": "Regen", "chosen": "Regen fällt", "rejected": "Buch ."},
+def test_all_preference_rows_are_conversational_and_probe_uses_template():
+    row = normalize_preference_row({"prompt": "P", "chosen": "C", "rejected": "R"})
+    assert row["prompt"] == [{"role": "user", "content": "P"}]
+    rendered = render_probe(Tokenizer(), row)
+    assert rendered["chosen"] == "user:P|assistant:C"
+
+
+def test_multiturn_validation_uses_template_token_limits(tiny_model_dir):
+    transformers = pytest.importorskip("transformers")
+    tokenizer = transformers.AutoTokenizer.from_pretrained(tiny_model_dir)
+    row = normalize_preference_row(
+        {
+            "prompt": [
+                {"role": "system", "content": "eins"},
+                {"role": "user", "content": "Frage eins"},
+                {"role": "assistant", "content": "Antwort eins"},
+                {"role": "user", "content": "Frage zwei"},
+            ],
+            "chosen": [{"role": "assistant", "content": "Antwort richtig"}],
+            "rejected": [{"role": "assistant", "content": "Antwort falsch"}],
+        }
+    )
+    diagnostics = validate_preference_rows(
+        [row],
+        tokenizer,
+        max_prompt_length=32,
+        max_completion_length=16,
+        context_length=64,
+        length_ratio_max=3.0,
+    )
+    assert [message["role"] for message in row["prompt"]] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
     ]
-
-
-def test_preference_rows_reject_empty_identical_and_oversized(tmp_path: Path):
-    model_path = build_tiny_model(tmp_path / "tiny")
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    settings = preference_settings()
-    with pytest.raises(PreferenceError, match="empty or identical"):
+    assert diagnostics["prompt_tokens"]["count"] == 1
+    with pytest.raises(ValueError, match="prompt would be truncated"):
         validate_preference_rows(
-            [{"prompt": "Hallo", "chosen": "Buch", "rejected": "Buch"}],
+            [row],
             tokenizer,
-            settings,
+            max_prompt_length=1,
+            max_completion_length=16,
+            context_length=64,
+            length_ratio_max=3.0,
         )
-    with pytest.raises(PreferenceError, match="prompt exceeds"):
-        validate_preference_rows(
-            [{"prompt": "Hallo " * 40, "chosen": "Buch", "rejected": "Regen"}],
-            tokenizer,
-            settings,
-        )
-
-
-def test_kto_conversion_contains_both_label_classes():
-    dataset = preference_dataset(rows(), "kto")
-    assert len(dataset) == 4
-    assert set(dataset["label"]) == {True, False}
 
 
 @pytest.mark.parametrize("method", ["dpo", "kto", "orpo"])
-def test_real_preference_method_trains_and_reloads_adapter(
-    method: str, tmp_path: Path, monkeypatch
+def test_conversational_fixture_trains_each_preference_method_one_step(
+    tmp_path, tiny_model_dir, method
 ):
-    import boldt_posttrain.preference as preference
-
-    model_path = build_tiny_model(tmp_path / "tiny")
-    state_root = tmp_path / "repo/outputs/posttrain"
-    monkeypatch.setattr(preference, "OUTPUTS", state_root)
-    training = experiment()
-    training["max_steps"] = 1
-    if method == "kto":
-        training["per_device_batch_size"] = 2
-    result = train_preference_adapter(
+    datasets = pytest.importorskip("datasets")
+    transformers = pytest.importorskip("transformers")
+    rows = [
+        normalize_preference_row(
+            {"prompt": "Frage eins", "chosen": "Antwort richtig", "rejected": "Antwort falsch"}
+        ),
+        normalize_preference_row(
+            {"prompt": "Frage zwei", "chosen": "Antwort zwei", "rejected": "Antwort drei"}
+        ),
+    ]
+    result = train_preference(
         method=method,
-        model_source=str(model_path),
-        revision=None,
-        rows=rows(),
-        output_root=state_root / "checkpoints",
-        policy=load_policy(),
-        training=training,
-        preference=preference_settings(),
-        target_modules=["c_attn"],
-        device="cpu",
-        qlora=False,
-        allow_checkpoints=True,
-        budget_minutes=2,
+        model=str(tiny_model_dir),
+        tokenizer=transformers.AutoTokenizer.from_pretrained(tiny_model_dir),
+        dataset=datasets.Dataset.from_list(rows),
+        output_dir=tmp_path / method,
+        training_args={
+            "max_steps": 1,
+            "per_device_train_batch_size": 2,
+            "learning_rate": 1e-3,
+            "max_length": 32,
+            "max_prompt_length": 16,
+            "gradient_checkpointing": False,
+            "save_strategy": "no",
+            "report_to": "none",
+            "use_cpu": True,
+            "disable_tqdm": True,
+            "logging_steps": 1,
+        },
+        peft_config=make_peft_config(
+            {
+                "lora_r": 4,
+                "lora_alpha": 8,
+                "target_modules": ["q_proj", "v_proj"],
+                "lora_init": "default",
+            }
+        ),
     )
-    assert result["status"] == "succeeded"
-    assert result["method"] == method
-    checkpoint = Path(result["checkpoint"])
-    assert (checkpoint / "adapter_model.safetensors").is_file()
-    base = AutoModelForCausalLM.from_pretrained(model_path)
-    adapter = PeftModel.from_pretrained(base, checkpoint)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    adapter(**tokenizer("Hallo", return_tensors="pt"))
+    assert result.global_step == 1
+
+
+def test_dpo_validation_and_sft_loss_use_pinned_api(tmp_path, tiny_model_dir):
+    datasets = pytest.importorskip("datasets")
+    transformers = pytest.importorskip("transformers")
+    rows = [
+        normalize_preference_row(
+            {"prompt": "Frage eins", "chosen": "Antwort richtig", "rejected": "Antwort falsch"}
+        ),
+        normalize_preference_row(
+            {"prompt": "Frage zwei", "chosen": "Antwort zwei", "rejected": "Antwort drei"}
+        ),
+    ]
+    result = train_preference(
+        method="dpo",
+        model=str(tiny_model_dir),
+        tokenizer=transformers.AutoTokenizer.from_pretrained(tiny_model_dir),
+        dataset=datasets.Dataset.from_list(rows),
+        eval_dataset=datasets.Dataset.from_list(rows),
+        output_dir=tmp_path / "dpo-eval",
+        training_args={
+            "max_steps": 1,
+            "per_device_train_batch_size": 2,
+            "per_device_eval_batch_size": 2,
+            "learning_rate": 1e-3,
+            "max_length": 32,
+            "gradient_checkpointing": False,
+            "eval_strategy": "steps",
+            "eval_steps": 1,
+            "save_strategy": "steps",
+            "save_steps": 1,
+            "save_total_limit": 1,
+            "load_best_model_at_end": True,
+            "metric_for_best_model": "eval_loss",
+            "greater_is_better": False,
+            "report_to": "none",
+            "use_cpu": True,
+            "disable_tqdm": True,
+        },
+        preference_config={
+            "loss_type": "sigmoid",
+            "sft_loss_weight": 0.25,
+            "beta": 0.1,
+            "max_prompt_length": 16,
+            "max_completion_length": 16,
+        },
+        peft_config=make_peft_config(
+            {
+                "lora_r": 4,
+                "lora_alpha": 8,
+                "target_modules": ["q_proj", "v_proj"],
+            }
+        ),
+    )
+    assert result.trainer.eval_dataset is not None
+    assert result.trainer.args.loss_type == ["sigmoid", "sft"]
+    assert result.trainer.args.loss_weights == [1.0, 0.25]
+    assert result.trainer.state.best_metric is not None
+
+
+@pytest.mark.parametrize("method", ["kto", "orpo"])
+def test_sft_loss_weight_is_rejected_for_unsupported_methods(method):
+    with pytest.raises(ValueError, match="only for DPO"):
+        train_preference(
+            method=method,
+            model=None,
+            tokenizer=None,
+            dataset=None,
+            output_dir=Path("unused"),
+            training_args={},
+            preference_config={"sft_loss_weight": 0.1},
+        )
+
+
+@pytest.mark.parametrize("method", ["kto", "orpo"])
+def test_kto_and_orpo_use_validation_and_select_best_checkpoint(
+    tmp_path, tiny_model_dir, method
+):
+    datasets = pytest.importorskip("datasets")
+    transformers = pytest.importorskip("transformers")
+    rows = [
+        normalize_preference_row(
+            {"prompt": "Frage eins", "chosen": "Antwort richtig", "rejected": "Antwort falsch"}
+        ),
+        normalize_preference_row(
+            {"prompt": "Frage zwei", "chosen": "Antwort zwei", "rejected": "Antwort drei"}
+        ),
+    ]
+    result = train_preference(
+        method=method,
+        model=str(tiny_model_dir),
+        tokenizer=transformers.AutoTokenizer.from_pretrained(tiny_model_dir),
+        dataset=datasets.Dataset.from_list(rows),
+        eval_dataset=datasets.Dataset.from_list(rows),
+        output_dir=tmp_path / f"{method}-eval",
+        training_args={
+            "max_steps": 1,
+            "per_device_train_batch_size": 2,
+            "per_device_eval_batch_size": 2,
+            "learning_rate": 1e-3,
+            "max_length": 32,
+            "gradient_checkpointing": False,
+            "eval_strategy": "steps",
+            "eval_steps": 1,
+            "save_strategy": "steps",
+            "save_steps": 1,
+            "save_total_limit": 1,
+            "load_best_model_at_end": True,
+            "metric_for_best_model": "eval_loss",
+            "greater_is_better": False,
+            "report_to": "none",
+            "use_cpu": True,
+            "disable_tqdm": True,
+        },
+        preference_config={
+            "sft_loss_weight": 0.0,
+            "max_prompt_length": 16,
+            "max_completion_length": 16,
+        },
+        peft_config=make_peft_config(
+            {
+                "lora_r": 4,
+                "lora_alpha": 8,
+                "target_modules": ["q_proj", "v_proj"],
+            }
+        ),
+    )
+    assert result.trainer.eval_dataset is not None
+    assert result.trainer.state.best_metric is not None

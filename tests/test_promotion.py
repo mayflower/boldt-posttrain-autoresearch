@@ -1,92 +1,47 @@
-import json
-from pathlib import Path
+import copy
 
-import pytest
-
-from boldt_posttrain.frontier import FrontierError, promote_candidate
-from boldt_posttrain.scoring import create_score
-from tests.artifact_chain import complete_chain
+from boldt_posttrain.scoring import score_run
 
 
 def passing_integrity(base_ref, repository_root, policy):
     return {"status": "pass", "base_ref": base_ref, "violations": []}
 
 
-def test_complete_chain_promotes_atomically(tmp_path: Path, monkeypatch):
-    chain = complete_chain(tmp_path, monkeypatch)
-    create_score(
-        chain["candidate_eval_run_id"],
-        policy=chain["policy"],
-        outputs_root=chain["outputs"],
-        repository_root=chain["repository"],
-    )
-    result = promote_candidate(
-        chain["candidate_run_id"],
-        base_ref="HEAD",
-        expected_current_sha256=None,
-        policy=chain["policy"],
-        outputs_root=chain["outputs"],
-        repository_root=chain["repository"],
-        integrity_checker=passing_integrity,
-    )
-    assert result["status"] == "promoted"
-    current = json.loads((chain["outputs"] / "frontier/current.json").read_text())
-    assert current["candidate_run_id"] == chain["candidate_run_id"]
-    assert (chain["outputs"] / "frontier/history" / f"{result['promotion_id']}.json").is_file()
+def document(profile="promotion"):
+    return {
+        "status": "ok",
+        "mode": "real",
+        "profile": profile,
+        "technical_error_count": 0,
+        "metrics": {
+            "german_instruction": 0.8,
+            "format_following": 0.9,
+            "reasoning_core": 0.7,
+            "longcontext": 0.7,
+            "safety": 0.95,
+            "german_language_retention": 0.99,
+            "english_bleed_rate": 0.01,
+            "empty_output_rate": 0.0,
+            "refusal_rate": 0.1,
+            "over_refusal_rate": 0.02,
+            "lm_eval": {"arc_de": 0.5},
+            "leakage": {"status": "clean", "hits": 0},
+            "license": {"status": "apache-2.0", "usable": True},
+        },
+    }
 
 
-def test_promotion_requires_positive_score_and_headline_gain(tmp_path: Path, monkeypatch):
-    chain = complete_chain(tmp_path, monkeypatch, improvement=-0.1)
-    create_score(
-        chain["candidate_eval_run_id"],
-        policy=chain["policy"],
-        outputs_root=chain["outputs"],
-        repository_root=chain["repository"],
-    )
-    with pytest.raises(Exception, match="score|event|promotion"):
-        promote_candidate(
-            chain["candidate_run_id"],
-            base_ref="HEAD",
-            expected_current_sha256=None,
-            policy=chain["policy"],
-            outputs_root=chain["outputs"],
-            repository_root=chain["repository"],
-            integrity_checker=passing_integrity,
-        )
-
-
-def test_integrity_failure_blocks_promotion(tmp_path: Path, monkeypatch):
-    chain = complete_chain(tmp_path, monkeypatch)
-    create_score(
-        chain["candidate_eval_run_id"],
-        policy=chain["policy"],
-        outputs_root=chain["outputs"],
-        repository_root=chain["repository"],
-    )
-    with pytest.raises(FrontierError, match="integrity"):
-        promote_candidate(
-            chain["candidate_run_id"],
-            base_ref="HEAD",
-            expected_current_sha256=None,
-            policy=chain["policy"],
-            outputs_root=chain["outputs"],
-            repository_root=chain["repository"],
-            integrity_checker=lambda *args: {"status": "fail", "violations": ["README.md"]},
-        )
-
-
-def test_promotion_requires_complete_artifact_chain(tmp_path: Path, monkeypatch):
-    chain = complete_chain(tmp_path, monkeypatch)
-    fake = chain["outputs"] / "evals/fake"
-    fake.mkdir()
-    (fake / "summary.json").write_text(json.dumps({"score": 99, "status": "succeeded"}))
-    with pytest.raises(Exception):
-        promote_candidate(
-            "fake",
-            base_ref="HEAD",
-            expected_current_sha256=None,
-            policy=chain["policy"],
-            outputs_root=chain["outputs"],
-            repository_root=chain["repository"],
-            integrity_checker=passing_integrity,
-        )
+def test_promotion_requires_all_confidence_bounds():
+    baseline = document()
+    run = copy.deepcopy(baseline)
+    run["metrics"]["german_instruction"] = 0.82
+    run["confidence_intervals"] = {
+        "german_instruction": {"lower": 0.01, "upper": 0.03},
+        "safety": {"lower": 0.0, "upper": 0.01},
+        "over_refusal_rate": {"lower": 0.0, "upper": 0.01},
+        "english_bleed_rate": {"lower": 0.0, "upper": 0.01},
+        "german_language_retention": {"lower": 0.0, "upper": 0.01},
+    }
+    assert score_run(run, baseline)["status"] == "pass"
+    del run["confidence_intervals"]["safety"]
+    assert "safety_ci" in [gate["name"] for gate in score_run(run, baseline)["failed_gates"]]

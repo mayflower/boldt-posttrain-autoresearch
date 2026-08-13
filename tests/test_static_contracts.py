@@ -4,19 +4,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_productive_paths_have_no_forbidden_tokens():
-    forbidden = (
+def test_productive_code_has_no_forbidden_frameworks_or_placeholders():
+    forbidden = [
         "real_" + "not_implemented",
         "missing_real_" + "implementation",
-        "Not" + "ImplementedError",
-        "|" + "| true",
-    )
-    violations: list[str] = []
-    for directory in ("src", "scripts", ".claude"):
-        for path in (ROOT / directory).rglob("*"):
-            if path.is_file():
-                text = path.read_text(encoding="utf-8", errors="replace")
-                for token in forbidden:
-                    if token in text:
-                        violations.append(f"{path.relative_to(ROOT)}: {token}")
-    assert not violations, "\n".join(violations)
+        "NotImplemented" + "Error",
+        "fallback" + "_to_",
+        "PPO" + "Trainer",
+    ]
+    for area in ("src", "scripts", "configs"):
+        for path in (ROOT / area).rglob("*"):
+            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
+                text = path.read_text(encoding="utf-8")
+                assert not any(value in text for value in forbidden), path

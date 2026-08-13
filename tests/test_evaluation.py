@@ -1,73 +1,68 @@
-from collections import Counter
-from pathlib import Path
-
-import pytest
+import json
+from types import SimpleNamespace
 
 from boldt_posttrain.evaluation import (
-    CATEGORY_MINIMUMS,
-    EvaluationError,
-    generate_cases,
-    load_suite,
-    score_output,
-    suite_hash,
+    EvaluationTechnicalError,
+    deterministic_proxy_cases,
+    evaluate_cases,
+    refusal_metrics,
+    run_lm_eval,
 )
-from boldt_posttrain.policy import load_policy
-from boldt_posttrain.resolver import resolve_model
-from tests.tiny_model import build_tiny_model
 
 
-def test_german_core_suite_has_required_case_counts_and_8k_contexts():
-    cases = load_suite()
-    counts = Counter(item["category"] for item in cases)
-    assert len(cases) == 294
-    for category, minimum in CATEGORY_MINIMUMS.items():
-        assert counts[category] >= minimum
-    assert all(
-        8000 <= len(item["prompt"].split()) <= 12000
-        for item in cases
-        if item["category"] == "longcontext"
+def test_tokenizer_failure_is_technical_not_model_error():
+    cases = [{"case_id": "x", "category": "instruction", "expected": "ja"}]
+
+    def broken(_case):
+        raise EvaluationTechnicalError("tokenization_error", "bad tokenizer")
+
+    result = evaluate_cases(cases, broken)
+    assert result["status"] == "failed"
+    assert result["technical_errors"] == {"tokenization_error": 1}
+    assert result["model_error_count"] == 0
+
+
+def test_proxy_is_deterministic_and_has_eight_per_category():
+    cases = [
+        {"case_id": f"{category}-{i}", "category": category}
+        for category in ("a", "b")
+        for i in range(12)
+    ]
+    first = deterministic_proxy_cases(cases)
+    assert first == deterministic_proxy_cases(cases)
+    assert len(first) == 16
+
+
+def test_refusal_dimensions_are_separate():
+    result = refusal_metrics(
+        [
+            {"output": "Ich kann dabei nicht helfen.", "should_refuse": True},
+            {"output": "Ich kann dabei nicht helfen.", "should_refuse": False},
+        ]
     )
-    assert len(suite_hash()) == 64
+    assert result == {"refusal_rate": 1.0, "desired_refusal_rate": 1.0, "over_refusal_rate": 1.0}
 
 
-def test_mechanical_validators_are_fail_closed():
-    exact = {"validator": {"type": "exact", "parameters": {"expected": "ja"}}}
-    assert score_output(exact, "ja")[0] == 1
-    assert score_output(exact, "ja extra")[0] == 0
-    numeric = {"validator": {"type": "numeric", "parameters": {"expected": 42, "tolerance": 0}}}
-    assert score_output(numeric, "42")[0] == 1
-    assert score_output(numeric, "42 ungefähr")[0] == 0
+def test_lm_eval_receives_explicit_repaired_tokenizer(tmp_path, monkeypatch):
+    captured = {}
 
+    def run(command, **_kwargs):
+        captured["command"] = command
+        result_dir = tmp_path / "results"
+        result_dir.mkdir()
+        (result_dir / "results.json").write_text(
+            json.dumps({"results": {"task": {"acc,none": 1.0}}}), encoding="utf-8"
+        )
+        return SimpleNamespace(returncode=0, stderr="")
 
-def test_real_transformers_generation_path_on_cpu(tmp_path: Path):
-    model_path = build_tiny_model(tmp_path / "tiny")
-    resolved = resolve_model(policy=load_policy(), model=str(model_path), external_roots=[tmp_path])
-    cases = [
-        {
-            "case_id": "one",
-            "category": "german_instruction",
-            "prompt": "Hallo",
-            "validator": {"type": "regex", "parameters": {"pattern": ".*"}},
-            "max_new_tokens": 2,
-        }
-    ]
-    records = generate_cases(resolved, cases, device="cpu")
-    assert len(records) == 1
-    assert records[0]["error"] is None
-    assert isinstance(records[0]["output"], str)
-
-
-def test_generation_rejects_cases_exceeding_model_context(tmp_path: Path):
-    model_path = build_tiny_model(tmp_path / "tiny")
-    resolved = resolve_model(policy=load_policy(), model=str(model_path), external_roots=[tmp_path])
-    cases = [
-        {
-            "case_id": "too-long",
-            "category": "longcontext",
-            "prompt": " ".join("Hallo" for _ in range(300)),
-            "validator": {"type": "exact", "parameters": {"expected": "Buch"}},
-            "max_new_tokens": 2,
-        }
-    ]
-    with pytest.raises(EvaluationError, match="exceeding model context"):
-        generate_cases(resolved, cases, device="cpu")
+    monkeypatch.setattr("boldt_posttrain.evaluation.subprocess.run", run)
+    result = run_lm_eval(
+        model="base/model",
+        tokenizer_ref=str(tmp_path / "fixed-tokenizer"),
+        tasks=["task"],
+        output_path=tmp_path / "results",
+        device="cpu",
+    )
+    model_args = captured["command"][captured["command"].index("--model_args") + 1]
+    assert model_args == f"pretrained=base/model,tokenizer={tmp_path / 'fixed-tokenizer'}"
+    assert result["metrics"] == {"task": 1.0}

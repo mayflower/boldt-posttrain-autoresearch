@@ -1,181 +1,152 @@
+import importlib.util
 import json
-import time
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from boldt_posttrain.artifacts import ArtifactRef, sha256_file
-from boldt_posttrain.merge import MergeError, execute_merge
-from boldt_posttrain.merge import MergeInput, materialize_adapter
-from boldt_posttrain.policy import load_policy
-from boldt_posttrain.resolver import ResolvedModelRef
-from boldt_posttrain.training import train_adapter
-from tests.artifact_chain import initialized_repository
-from tests.test_training_preflight import experiment
-from tests.tiny_model import build_tiny_model
+from boldt_posttrain.evaluation import finalize_summary
+from boldt_posttrain.frontier import update_specialist_frontiers
+from boldt_posttrain.merge import build_candidates, mergekit_config, run_merge_round
+from boldt_posttrain.training import make_peft_config
 
 
-def full_model_ref(path: Path, repository: Path) -> dict:
-    return ArtifactRef.from_path(
-        path,
-        role="full_checkpoint",
-        media_type="application/vnd.boldt.transformers-checkpoint",
-        relative_to=repository,
-    ).to_dict()
+def _merge_script():
+    path = Path(__file__).resolve().parents[1] / "scripts/pt_merge_search.py"
+    spec = importlib.util.spec_from_file_location("pt_merge_search_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_multiple_merge_candidates_choose_one_full_eval():
+    parents = [{"run_id": name, "base_model": "seed"} for name in ("a", "b", "c")]
+    candidates = build_candidates(parents, ["linear", "ties"], limit=5)
+    dev_calls = []
+
+    def proxy(candidate):
+        return {
+            "proxy_score": float(candidate["run_id"].startswith("a")),
+            "gpu_seconds": 2,
+            "technical_error_count": 0,
+            "hard_gates_passed": True,
+        }
+
+    def dev(candidate):
+        dev_calls.append(candidate["run_id"])
+        return {"status": "ok", "technical_error_count": 0}
+
+    result = run_merge_round(candidates=candidates, proxy_evaluate=proxy, dev_evaluate=dev)
+    assert result["status"] == "ok"
+    assert len(candidates) == 5
+    assert len(dev_calls) == 1
+
+
+def test_verified_specialist_frontiers_feed_merge_matrix(tmp_path):
+    summary = finalize_summary(
+        {
+            "run_id": "reasoning-run",
+            "model": str(tmp_path / "adapter"),
+            "mode": "real",
+            "status": "ok",
+            "technical_error_count": 0,
+            "hard_gates": {"language": True, "safety": True, "format": True},
+            "metrics": {
+                "reasoning_core": 0.9,
+                "leakage": {"status": "clean", "hits": 0},
+                "license": {"usable": True},
+            },
+        }
+    )
+    frontier = update_specialist_frontiers([summary])
+    path = tmp_path / "frontier.json"
+    path.write_text(json.dumps(frontier), encoding="utf-8")
+    eligible = _merge_script()._frontier_eligible(path, "seed")
+    assert eligible == [
+        {
+            "run_id": "reasoning-run",
+            "base_model": "seed",
+            "run_type": "verified_specialist_frontier",
+            "checkpoint": str(tmp_path / "adapter"),
+            "frontier": "reasoning",
+        }
+    ]
+    matrix = _merge_script().build_matrix(
+        eligible
+        + [
+            {
+                "run_id": "format-run",
+                "base_model": "seed",
+                "checkpoint": str(tmp_path / "format-adapter"),
+            }
+        ],
+        ["linear"],
+    )
+    assert matrix[0]["run_id"] == "reasoning-run+format-run::linear"
+
+
+def test_all_merge_configs_validate_against_locked_mergekit():
+    mergekit = pytest.importorskip("mergekit.config")
+    for method in ("linear", "slerp", "ties", "dare_ties"):
+        mergekit.MergeConfiguration.model_validate(
+            mergekit_config(
+                method=method,
+                base_model="seed",
+                models=["left", "right"],
+                dtype="bfloat16",
+            )
+        )
 
 
 @pytest.mark.parametrize("method", ["linear", "slerp", "ties", "dare_ties"])
-def test_real_tiny_mergekit_output_loads_and_forwards(method: str, tmp_path: Path):
-    repository = initialized_repository(tmp_path / "repo")
-    first = build_tiny_model(repository / "models/first")
-    second = build_tiny_model(repository / "models/second")
-    second_model = AutoModelForCausalLM.from_pretrained(second)
-    for parameter in second_model.parameters():
-        parameter.data.add_(0.001)
-    second_model.save_pretrained(second)
-    tokenizer_hash = sha256_file(first / "tokenizer.json")
-    policy = load_policy()
-    metadata = {
-        "kind": "local_full_checkpoint",
-        "requested": "fixture",
-        "base_model": {
-            "repo_id": policy.seed_model["repo_id"],
-            "revision": policy.seed_model["revision"],
-        },
-        "artifact": None,
-        "tokenizer_sha256": tokenizer_hash,
-        "chat_template_sha256": sha256_file(first / "chat_template.jinja"),
-        "model_config_sha256": sha256_file(first / "config.json"),
-        "architecture": "GPT2LMHeadModel",
-        "source_run_id": None,
-    }
-    outputs = repository / "outputs/posttrain"
-    result = execute_merge(
-        method=method,
-        model_paths=[first, second],
-        input_refs=[full_model_ref(first, repository), full_model_ref(second, repository)],
-        parent_run_ids=["fixture-one", "fixture-two"],
-        model_metadata=metadata,
-        data_metadata={
-            "license_status": "usable",
-            "leakage_statistics": {"status": "clean", "hit_count": 0},
-        },
-        parameters=(
-            {"weights": [0.5, 0.5]}
-            if method == "linear"
-            else {"t": 0.5}
-            if method == "slerp"
-            else {"weight": 0.5, "density": 0.5}
-        ),
-        dtype="float32",
-        output_checkpoint_root=outputs / "checkpoints",
-        output_merge_root=outputs / "merge",
-        state_root=outputs,
-        policy=policy,
-        allow_checkpoints=True,
-        use_gpu=False,
-        deadline=time.monotonic() + 120,
-        repository_root=repository,
-        base_model=str(first) if method in {"ties", "dare_ties"} else None,
-    )
-    checkpoint = Path(result["checkpoint"])
-    model = AutoModelForCausalLM.from_pretrained(checkpoint)
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-    model(**tokenizer("Hallo", return_tensors="pt"))
-    card = json.loads((outputs / "runs" / result["run_id"] / "run_card.json").read_text())
-    assert card["environment"]["mergekit_exit_code"] == 0
-    assert (outputs / "merge" / result["run_id"] / "mergekit.yaml").is_file()
-
-
-def test_checkpoint_permission_blocks_before_writes(tmp_path: Path):
-    outputs = tmp_path / "outputs/posttrain"
-    with pytest.raises(MergeError, match="permission"):
-        execute_merge(
-            method="linear",
-            model_paths=[],
-            input_refs=[],
-            parent_run_ids=[],
-            model_metadata={},
-            data_metadata={},
-            parameters={},
-            dtype="float32",
-            output_checkpoint_root=outputs / "checkpoints",
-            output_merge_root=outputs / "merge",
-            state_root=outputs,
-            policy=load_policy(),
-            allow_checkpoints=False,
-            use_gpu=False,
-            deadline=time.monotonic() + 1,
-        )
-    assert not (outputs / "checkpoints").exists()
-
-
-def test_real_peft_adapter_materializes_to_full_checkpoint(tmp_path: Path, monkeypatch):
-    from datasets import Dataset
-    import boldt_posttrain.training as training_module
-
-    repository = initialized_repository(tmp_path / "repo")
-    outputs = repository / "outputs/posttrain"
-    monkeypatch.setattr(training_module, "OUTPUTS", outputs)
-    model_path = build_tiny_model(repository / "models/base")
-    policy = load_policy()
-    trained = train_adapter(
-        kind="sft",
-        model_source=str(model_path),
-        revision=None,
-        dataset=Dataset.from_list(
-            [
+def test_locked_mergekit_executes_real_tiny_adapter_merge(tmp_path, tiny_model_dir, method):
+    executable = shutil.which("mergekit-yaml")
+    if not executable:
+        pytest.skip("mergekit console executable is not installed")
+    peft = pytest.importorskip("peft")
+    transformers = pytest.importorskip("transformers")
+    adapters = []
+    for index in range(2):
+        model = transformers.AutoModelForCausalLM.from_pretrained(tiny_model_dir)
+        model = peft.get_peft_model(
+            model,
+            make_peft_config(
                 {
-                    "messages": [
-                        {"role": "user", "content": "Hallo"},
-                        {"role": "assistant", "content": "Buch"},
-                    ]
+                    "lora_r": 4,
+                    "lora_alpha": 8,
+                    "target_modules": ["q_proj", "v_proj"],
+                    "lora_init": "default",
                 }
-            ]
-        ),
-        output_root=outputs / "checkpoints",
-        policy=policy,
-        experiment=experiment(),
-        target_modules=["c_attn"],
-        device="cpu",
-        qlora=False,
-        allow_checkpoints=True,
-        budget_minutes=2,
-        repository_root=repository,
-        data_metadata={
-            "license_status": "usable",
-            "leakage_statistics": {"status": "clean", "hit_count": 0},
-        },
+            ),
+        )
+        adapter = tmp_path / f"adapter-{index}"
+        model.save_pretrained(adapter)
+        adapters.append(str(adapter))
+    config = mergekit_config(
+        method=method,
+        base_model=str(tiny_model_dir),
+        models=adapters,
+        dtype="float32",
     )
-    card = json.loads((outputs / "runs" / trained["run_id"] / "run_card.json").read_text())
-    checkpoint_ref = next(item for item in card["outputs"] if item["role"] == "adapter_checkpoint")
-    model = card["model"]
-    resolved = ResolvedModelRef(
-        kind="peft_adapter",
-        requested=trained["run_id"],
-        base_model=model["base_model"],
-        artifact=checkpoint_ref,
-        tokenizer_sha256=model["tokenizer_sha256"],
-        chat_template_sha256=model["chat_template_sha256"],
-        model_config_sha256=model["model_config_sha256"],
-        architecture=model["architecture"],
-        source_run_id=trained["run_id"],
+    config_path = tmp_path / "merge.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    output = tmp_path / "merged"
+    completed = subprocess.run(
+        [
+            executable,
+            str(config_path),
+            str(output),
+            "--device",
+            "cpu",
+            "--lora-merge-cache",
+            str(tmp_path / "lora-cache"),
+            "--quiet",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
-    path, materialization_id = materialize_adapter(
-        MergeInput(trained["run_id"], resolved, card, {"status": "passed"}),
-        base_model_source=str(model_path),
-        base_model_revision=None,
-        output_root=outputs / "checkpoints",
-        policy=policy,
-        allow_checkpoints=True,
-        repository_root=repository,
-        state_root=outputs,
-    )
-    full = AutoModelForCausalLM.from_pretrained(path)
-    tokenizer = AutoTokenizer.from_pretrained(path)
-    full(**tokenizer("Hallo", return_tensors="pt"))
-    materialization_card = json.loads(
-        (outputs / "runs" / materialization_id / "run_card.json").read_text()
-    )
-    assert materialization_card["parameters"]["operation"] == "peft_merge_and_unload"
+    assert completed.returncode == 0, completed.stderr
+    reloaded = transformers.AutoModelForCausalLM.from_pretrained(output)
+    assert reloaded.config.vocab_size == 17
