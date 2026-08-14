@@ -72,6 +72,62 @@ def test_deadline_callback_stops_at_reserved_boundary():
     assert callback.stop_reason == "budget_limit"
 
 
+def test_reload_verified_budget_stop_is_successful():
+    from boldt_posttrain.secure_compat.training import (
+        DeadlineCallback as SecureDeadlineCallback,
+        _completion_outcome,
+    )
+
+    callback = SecureDeadlineCallback(float("inf"))
+    callback.exhausted = True
+    assert _completion_outcome(callback) == ("succeeded", "budget_limit")
+
+
+def test_secure_qlora_honors_explicit_cuda_device(monkeypatch):
+    import torch
+    import transformers
+    import peft
+    import boldt_posttrain.secure_compat.training as secure_training
+
+    captured = {}
+    model = object()
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(secure_training, "load_tokenizer", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        transformers.AutoModelForCausalLM,
+        "from_pretrained",
+        lambda *args, **kwargs: captured.update(kwargs) or model,
+    )
+    monkeypatch.setattr(peft, "prepare_model_for_kbit_training", lambda value, **kwargs: value)
+    policy = type(
+        "Policy",
+        (),
+        {
+            "document": {
+                "training": {
+                    "qlora": {
+                        "quant_type": "nf4",
+                        "double_quant": True,
+                        "compute_dtype": "bfloat16",
+                    }
+                }
+            }
+        },
+    )()
+
+    loaded, _tokenizer = secure_training.create_model_and_tokenizer(
+        "/tmp/model",
+        revision=None,
+        qlora=True,
+        gradient_checkpointing=False,
+        policy=policy,
+        device="cuda:1",
+    )
+
+    assert loaded is model
+    assert captured["device_map"] == {"": 1}
+
+
 class BrokenTokenizer:
     chat_template = "present"
 

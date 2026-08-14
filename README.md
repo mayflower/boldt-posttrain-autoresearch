@@ -31,8 +31,9 @@ remains supported, but does not replace the lock.
 
 ## Modes
 
-Every mutating operation requires exactly one of `--dry-run` or `--real`. Plans are written only
-under `outputs/posttrain/plans/`. Training and distillation additionally require
+Every mutating operation requires exactly one of `--dry-run` or `--real`. Discovery plans are
+written under `outputs/posttrain/plans/`; other dry runs write only explicitly labelled dry-run
+artifacts. Training and distillation additionally require
 `--allow-gpu --allow-checkpoints`; evaluation requires `--allow-gpu`; merge requires
 `--allow-checkpoints` and uses `--allow-gpu` for its configured GPU path. No command falls back to
 CPU, another model, another trainer, or a smaller benchmark.
@@ -56,7 +57,7 @@ python -m boldt_posttrain.cli train cpt --real --allow-gpu --allow-checkpoints -
 python -m boldt_posttrain.cli train preference --method dpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
 python -m boldt_posttrain.cli train preference --method kto --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
 python -m boldt_posttrain.cli train preference --method orpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
-python -m boldt_posttrain.cli distill --teacher mayflowergmbh/boldt-dc-1b-german-it-16k-dpo@a24720616fc0ae0d0e8d2009d1c4eddec56fd15c --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
+python -m boldt_posttrain.cli distill --teacher mayflowergmbh/boldt-dc-1b-german-it-16k-dpo@a24720616fc0ae0d0e8d2009d1c4eddec56fd15c --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
 python -m boldt_posttrain.cli merge search --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
 ```
 

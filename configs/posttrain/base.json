@@ -1,6 +1,6 @@
 {
   "protected": true,
-  "description": "Base defaults for Boldt German post-training AutoResearch. Edit experiments/current.json rather than this file during loops.",
+  "description": "Base defaults for Boldt German post-training AutoResearch. Edit configs/posttrain/current.json rather than this file during loops.",
   "paths": {
     "outputs": "outputs/posttrain",
     "data": "outputs/posttrain/data",

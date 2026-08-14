@@ -175,6 +175,7 @@ def verified_merge_inputs(frontier_document: Dict[str, Any]) -> List[Dict[str, A
 
 from .secure_compat.frontier import (  # noqa: E402, F401
     FrontierError,
+    _integrity_check,
     current_frontier_hash,
     frontier_status,
     promote_candidate,

@@ -109,8 +109,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--allow-gpu", action="store_true")
     ap.add_argument("--merge-device", default="cpu")
     ap.add_argument("--device", default="cuda:0", help="explicit evaluation device")
+    ap.add_argument("--budget-minutes", type=float, default=90)
     args = ap.parse_args(argv)
     dry = not args.real
+    deadline = time.monotonic() + args.budget_minutes * 60
 
     cfg = cfgmod.resolve_config(pathlib.Path(args.config))
     methods = cfg.get("merge", {}).get("methods", ["linear", "slerp", "ties", "dare_ties"])
@@ -180,7 +182,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "--lora-merge-cache",
                     str(candidate_dir / "lora-cache"),
                 ]
-                completed = subprocess.run(command, capture_output=True, text=True)
+                try:
+                    completed = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        timeout=max(1.0, deadline - time.monotonic()),
+                    )
+                except subprocess.TimeoutExpired:
+                    candidate.update(status="failed", technical_error="budget_limit")
+                    matrix["status"] = "failed"
+                    break
                 if completed.returncode:
                     candidate.update(
                         status="failed",
@@ -205,7 +217,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         device=args.device,
                         output_dir=out_dir / candidate["run_id"] / profile,
                         config=cfg,
-                        deadline=time.monotonic() + 90 * 60,
+                        deadline=deadline,
                     )
                     return {
                         "status": summary["status"],

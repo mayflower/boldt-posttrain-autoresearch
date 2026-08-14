@@ -38,6 +38,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--allow-checkpoints", action="store_true")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--mix-plan", default=None, help="path to a verified mix_plan.json")
+    ap.add_argument("--method", choices=("dpo", "kto", "orpo"), default=None)
     args = ap.parse_args(argv)
 
     if args.real and args.dry_run:
@@ -46,6 +47,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     dry = not args.real
 
     cfg = cfgmod.resolve_config(pathlib.Path(args.config))
+    if args.method is not None:
+        cfg["preference"]["method"] = args.method
     return training.run_training_trial(
         cfg=cfg,
         kind="preference",

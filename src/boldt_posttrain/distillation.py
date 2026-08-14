@@ -138,3 +138,11 @@ def run_distillation(
     if register_candidate is not None:
         register_candidate(result)
     return result
+
+
+from .secure_compat.distillation import (  # noqa: E402, F401
+    DistillationError,
+    _teacher_license,
+    distill_and_train,
+    extract_prompts,
+)

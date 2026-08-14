@@ -182,9 +182,7 @@ def test_sft_loss_weight_is_rejected_for_unsupported_methods(method):
 
 
 @pytest.mark.parametrize("method", ["kto", "orpo"])
-def test_kto_and_orpo_use_validation_and_select_best_checkpoint(
-    tmp_path, tiny_model_dir, method
-):
+def test_kto_and_orpo_use_validation_and_select_best_checkpoint(tmp_path, tiny_model_dir, method):
     datasets = pytest.importorskip("datasets")
     transformers = pytest.importorskip("transformers")
     rows = [

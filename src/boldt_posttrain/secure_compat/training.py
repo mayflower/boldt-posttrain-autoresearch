@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -97,6 +98,8 @@ def create_model_and_tokenizer(
     if qlora:
         if device == "cpu" or not torch.cuda.is_available():
             raise TrainingError("QLoRA requires CUDA and cannot fall back to CPU or LoRA")
+        if not re.fullmatch(r"cuda:\d+", device):
+            raise TrainingError("QLoRA requires an explicit CUDA device such as cuda:0")
         qlora_policy = policy.document["training"]["qlora"]
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -104,7 +107,7 @@ def create_model_and_tokenizer(
             bnb_4bit_use_double_quant=qlora_policy["double_quant"],
             bnb_4bit_compute_dtype=torch.bfloat16,
         )
-        kwargs["device_map"] = {"": 0}
+        kwargs["device_map"] = {"": int(device.split(":", 1)[1])}
     model = AutoModelForCausalLM.from_pretrained(model_source, **kwargs)
     if qlora:
         model = prepare_model_for_kbit_training(
@@ -194,6 +197,11 @@ class DeadlineCallback(TrainerCallback):
             control.should_training_stop = True
             self.exhausted = True
         return control
+
+
+def _completion_outcome(callback: DeadlineCallback) -> tuple[str, str]:
+    """A saved, reload-verified checkpoint succeeds even at the budget boundary."""
+    return "succeeded", "budget_limit" if callback.exhausted else "max_steps"
 
 
 def _checkpoint_smoke(checkpoint: Path, model_source: str, revision: str | None) -> None:
@@ -342,7 +350,7 @@ def train_adapter(
     if not (staging / "chat_template.jinja").exists() and tokenizer.chat_template:
         (staging / "chat_template.jinja").write_text(tokenizer.chat_template)
     _checkpoint_smoke(staging, model_source, revision)
-    status = "budget_exhausted" if callback.exhausted else "succeeded"
+    status, stop_reason = _completion_outcome(callback)
     metrics = {
         "train_loss": float(result.training_loss),
         "steps_completed": int(trainer.state.global_step),
@@ -361,7 +369,7 @@ def train_adapter(
         "effective_batch_size": experiment["per_device_batch_size"]
         * experiment["gradient_accumulation_steps"],
         "learning_rate": experiment["learning_rate"],
-        "stop_reason": status,
+        "stop_reason": stop_reason,
     }
     checkpoint_ref = ArtifactRef.from_path(
         staging,

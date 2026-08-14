@@ -90,9 +90,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                 allowed_licenses=data_cfg.get("allowed_licenses", []),
                 allowed_sources=data_cfg.get("allowed_sources", []),
             )
-            if args.discovery_run_id != discovery.get("run_id"):
+            discovery_run_id = args.discovery_run_id or discovery.get("run_id")
+            selection_run_id = args.selection_run_id or selection.get("run_id")
+            if discovery_run_id != discovery.get("run_id"):
                 raise ValueError("--discovery-run-id must exactly match discovery artifact")
-            if args.selection_run_id != selection.get("run_id"):
+            if selection_run_id != selection.get("run_id"):
                 raise ValueError("--selection-run-id must exactly match selection artifact")
             language_id = language_identifier_from_config(
                 data_cfg, cache_dir=ROOT / "outputs/posttrain/cache"
@@ -118,8 +120,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 decontamination_hash=corpus["artifact_hash"],
                 decontamination_corpus=corpus,
                 policy_hash=cfg.get("policy_hash"),
-                discovery_run_id=args.discovery_run_id,
-                selection_run_id=args.selection_run_id,
+                discovery_run_id=discovery_run_id,
+                selection_run_id=selection_run_id,
                 seed=int(training_cfg["seed"]),
                 max_rows_per_source=int(data_cfg.get("max_rows_per_source_real", 50_000)),
                 global_max_rows=int(data_cfg.get("max_rows", 50_000)),

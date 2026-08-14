@@ -95,3 +95,39 @@ def test_unknown_real_candidate_creates_no_eval_directory(
     assert exit_code == 3
     assert result["status"] == "failed"
     assert not (outputs / "evals").exists()
+
+
+def test_read_only_commands_execute_without_routing_sentinels(capsys):
+    assert main(["policy", "validate"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "ok"
+    assert main(["eval", "catalog"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "succeeded"
+    assert main(["doctor", "--mode", "all"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "succeeded"
+
+
+def test_rlvr_defaults_to_recipe_policy():
+    args = build_parser().parse_args(
+        ["train", "rlvr", "--real", "--allow-gpu", "--allow-checkpoints"]
+    )
+    assert Path(args.policy).name == "recipe-policy.json"
+
+
+def test_recipe_dry_run_executes_in_isolated_output(tmp_path: Path, capsys):
+    assert (
+        main(
+            [
+                "train",
+                "sft",
+                "--dry-run",
+                "--config",
+                "configs/posttrain/current.json",
+                "--out",
+                str(tmp_path / "runs"),
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["mode"] == "dry_run"
+    assert (Path(result["out"]) / "run_card.json").is_file()

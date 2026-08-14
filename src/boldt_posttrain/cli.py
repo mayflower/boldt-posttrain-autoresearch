@@ -37,14 +37,16 @@ from .evaluation import (
 )
 from .failure_mining import build_synthesis_tasks, mine_failures, synthesize_verified
 from .frontier import aggregate, current_frontier, update_specialist_frontiers
+from .policy import load_policy
 from .provenance import append_event, new_run_card, stamp, write_run_card
 from .rlvr import iter_rlvr_rows, train_rlvr
-from .resolver import OUTPUTS
+from .resolver import OUTPUTS, resolve_model
 from .scheduler import run_mix_probes, run_successive_halving
 from .training import _train_real, compare_sft_rlvr, validate_device
 from .verified_rl import train_verified_grpo
 
 ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_ROOT = ROOT
 
 
 class CliParseError(ValueError):
@@ -65,12 +67,8 @@ def _explicit_mode(parser: argparse.ArgumentParser, *, gpu: bool = False) -> Non
         parser.add_argument("--allow-checkpoints", action="store_true")
 
 
-def _secure_command(_args: argparse.Namespace) -> int:
-    raise RuntimeError("secure command routing must happen before handler dispatch")
-
-
 def _load(script_stem: str):
-    path = ROOT / "scripts" / f"{script_stem}.py"
+    path = SCRIPT_ROOT / "scripts" / f"{script_stem}.py"
     spec = importlib.util.spec_from_file_location(script_stem, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load command script: {path}")
@@ -90,6 +88,8 @@ def _forward(
     for field in fields:
         value = getattr(args, field, None)
         if value is not None:
+            if field == "config" and not Path(str(value)).is_absolute():
+                value = ROOT / str(value)
             argv.extend(["--" + field.replace("_", "-"), str(value)])
     for flag in flags:
         if getattr(args, flag, False):
@@ -98,6 +98,16 @@ def _forward(
 
 
 def _eval_run_command(args: argparse.Namespace) -> int:
+    if args.real and args.candidate:
+        try:
+            resolve_model(
+                policy=load_policy(),
+                candidate=args.candidate,
+                outputs_root=OUTPUTS,
+            )
+        except Exception as exc:
+            print(json.dumps({"status": "failed", "error": str(exc)}))
+            return 3
     return _forward(
         args,
         "pt_eval",
@@ -135,6 +145,9 @@ def _baseline_run_command(args: argparse.Namespace) -> int:
 
 
 def _score_command(args: argparse.Namespace) -> int:
+    if args.out is None:
+        label = args.candidate or (Path(args.run).stem if args.run else "score")
+        args.out = str(ROOT / "outputs/posttrain/scores" / f"{label}.json")
     return _forward(
         args,
         "pt_score",
@@ -166,6 +179,153 @@ def _data_prepare_command(args: argparse.Namespace) -> int:
         ),
         ("real", "dry_run"),
     )
+
+
+def _data_discover_command(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        try:
+            config_path = Path(args.config)
+            if not config_path.is_absolute():
+                config_path = ROOT / config_path
+            cfg = cfgmod.resolve_config(config_path)
+            errors = cfgmod.validate_config_dict(cfg)
+            if errors:
+                raise ValueError("; ".join(errors))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(json.dumps({"status": "failed", "error": str(exc), "exit_code": 2}))
+            return 2
+        plan_id = f"plan-data-discover-{stamp()}"
+        path = OUTPUTS / "plans" / plan_id / "plan.json"
+        path.parent.mkdir(parents=True, exist_ok=False)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "plan_id": plan_id,
+                    "operation": "data-discover",
+                    "config": str(config_path),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(json.dumps({"status": "succeeded", "mode": "dry_run", "plan": str(path)}))
+        return 0
+    return _forward(
+        args,
+        "pt_discover_openeurollm_de",
+        ("config", "out", "format"),
+        ("real", "dry_run"),
+    )
+
+
+def _train_command(args: argparse.Namespace) -> int:
+    stem = {
+        "sft": "pt_train_specialist",
+        "cpt": "pt_train_cpt",
+        "preference": "pt_train_preference",
+    }[args.action]
+    fields = ("config", "specialist", "out", "data", "budget_minutes", "device", "mix_plan")
+    if args.action == "preference":
+        fields = (*fields, "method")
+    return _forward(
+        args,
+        stem,
+        fields,
+        ("real", "dry_run", "allow_gpu", "allow_checkpoints"),
+    )
+
+
+def _merge_command(args: argparse.Namespace) -> int:
+    return _forward(
+        args,
+        "pt_merge_search",
+        ("config", "runs", "frontier", "out", "format", "merge_device", "device", "budget_minutes"),
+        ("real", "dry_run", "allow_gpu"),
+    )
+
+
+def _promote_command(args: argparse.Namespace) -> int:
+    return _forward(
+        args,
+        "pt_promote",
+        ("candidate", "config", "baseline", "base_ref", "out", "format"),
+        (),
+    )
+
+
+def _model_command(args: argparse.Namespace) -> int:
+    try:
+        policy = load_policy(ROOT / args.policy)
+        resolved = resolve_model(
+            policy=policy,
+            candidate=args.candidate,
+            model=args.model,
+            outputs_root=Path(args.outputs_root),
+            external_roots=tuple(Path(item) for item in args.external_root),
+        )
+    except Exception as exc:
+        print(json.dumps({"status": "failed", "error": str(exc)}))
+        return 3
+    print(json.dumps({"status": "succeeded", "model": resolved.to_dict()}, sort_keys=True))
+    return 0
+
+
+def _eval_catalog_command(_args: argparse.Namespace) -> int:
+    from .evaluation import lm_eval_catalog
+
+    try:
+        result = lm_eval_catalog(load_policy())
+    except Exception as exc:
+        print(json.dumps({"status": "failed", "error": str(exc)}))
+        return 5
+    print(json.dumps({"status": "succeeded", **result}, sort_keys=True))
+    return 0
+
+
+def _doctor_command(args: argparse.Namespace) -> int:
+    from .secure_compat.training import doctor
+
+    if args.real and not args.allow_gpu:
+        print(json.dumps({"status": "failed", "error": "--real requires --allow-gpu"}))
+        return 2
+    try:
+        result = doctor(mode=args.mode, real=args.real)
+    except Exception as exc:
+        print(json.dumps({"status": "failed", "error": str(exc)}))
+        return 4
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+def _distill_command(args: argparse.Namespace) -> int:
+    from .secure_compat.distillation import run_cli
+
+    if not (args.real and args.allow_gpu and args.allow_checkpoints):
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error": "distillation requires --real --allow-gpu --allow-checkpoints",
+                }
+            )
+        )
+        return 2
+    try:
+        result, exit_code = run_cli(args)
+    except Exception as exc:
+        print(json.dumps({"status": "failed", "error": str(exc)}))
+        return 4
+    print(json.dumps(result, sort_keys=True))
+    return exit_code
+
+
+def _loop_command(args: argparse.Namespace) -> int:
+    forwarded = list(args.remainder)
+    if forwarded[:1] == ["run"]:
+        forwarded.pop(0)
+    forwarded = [item for item in forwarded if item != "--allow-checkpoints"]
+    return _script("pt_loop", forwarded)
 
 
 def main_status(argv: Optional[Sequence[str]] = None) -> int:
@@ -326,7 +486,9 @@ def _bootstrap(args: argparse.Namespace) -> int:
 def _policy_validate(args: argparse.Namespace) -> int:
     path = Path(args.path)
     try:
-        policy = json.loads(path.read_text(encoding="utf-8"))
+        secure_policy = load_policy(path)
+        recipe_path = ROOT / "configs/posttrain/recipe-policy.json"
+        policy = json.loads(recipe_path.read_text(encoding="utf-8"))
         required = {
             "schema_version",
             "allowed_licenses",
@@ -342,7 +504,15 @@ def _policy_validate(args: argparse.Namespace) -> int:
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(json.dumps({"status": "failed", "error": str(exc)}))
         return 5
-    print(json.dumps({"status": "ok", "path": str(path)}))
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "policy": str(secure_policy.path),
+                "recipe_policy": str(recipe_path),
+            }
+        )
+    )
     return 0
 
 
@@ -762,7 +932,7 @@ def _search_run(args: argparse.Namespace) -> int:
             if not rlvr_paths:
                 raise ValueError("RLOO search requires RLVR shards")
             policy = json.loads(
-                (ROOT / "configs/posttrain/policy.json").read_text(encoding="utf-8")
+                (ROOT / "configs/posttrain/recipe-policy.json").read_text(encoding="utf-8")
             )
             identifier = language_identifier_from_config(
                 cfg["data"], cache_dir=Path(args.output).parent / "cache"
@@ -1115,7 +1285,7 @@ def build_parser() -> argparse.ArgumentParser:
     model_resolve.add_argument("--external-root", action="append", default=[])
     model_resolve.add_argument("--outputs-root", default=str(OUTPUTS))
     model_resolve.add_argument("--policy", default="configs/posttrain/policy.json")
-    model_resolve.set_defaults(handler=_secure_command)
+    model_resolve.set_defaults(handler=_model_command)
 
     evaluation = commands.add_parser("eval")
     eval_sub = evaluation.add_subparsers(dest="action", required=True)
@@ -1138,7 +1308,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--suite", default=None)
     validate.set_defaults(handler=_eval_validate)
     catalog = eval_sub.add_parser("catalog")
-    catalog.set_defaults(handler=_secure_command)
+    catalog.set_defaults(handler=_eval_catalog_command)
     register = eval_sub.add_parser("register-promotion-suite")
     register.add_argument("--path", required=True)
     register.add_argument(
@@ -1167,7 +1337,7 @@ def build_parser() -> argparse.ArgumentParser:
     score.add_argument("--run", default=None)
     score.add_argument("--candidate", default=None)
     score.add_argument("--baseline", default=None)
-    score.add_argument("--out", default=str(ROOT / "outputs/posttrain/scores"))
+    score.add_argument("--out", default=None)
     score.add_argument("--profile", choices=["dev", "promotion"], default="dev")
     score.add_argument("--format", choices=["json", "markdown"], default="json")
     score.set_defaults(handler=_score_command)
@@ -1178,7 +1348,7 @@ def build_parser() -> argparse.ArgumentParser:
     mine.add_argument("--eval-run", required=True)
     mine.add_argument("--evals", default=str(ROOT / "outputs/posttrain/evals"))
     mine.add_argument("--output", default=str(ROOT / "outputs/posttrain/failures"))
-    mine.add_argument("--policy", default=str(ROOT / "configs/posttrain/policy.json"))
+    mine.add_argument("--policy", default=str(ROOT / "configs/posttrain/recipe-policy.json"))
     mine.set_defaults(handler=_failures_mine)
 
     train = commands.add_parser("train")
@@ -1186,17 +1356,22 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("sft", "cpt", "preference"):
         secure_train = train_sub.add_parser(name)
         _explicit_mode(secure_train, gpu=True)
-        secure_train.add_argument("--config", default="configs/posttrain/current.json")
+        secure_train.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
         secure_train.add_argument("--budget-minutes", type=float)
+        secure_train.add_argument("--specialist")
+        secure_train.add_argument("--out", default=str(ROOT / "outputs/posttrain/runs"))
+        secure_train.add_argument("--data", default=str(ROOT / "outputs/posttrain/data"))
+        secure_train.add_argument("--device", default="cuda:0")
+        secure_train.add_argument("--mix-plan")
         if name == "preference":
             secure_train.add_argument("--method", choices=("dpo", "kto", "orpo"))
-        secure_train.set_defaults(handler=_secure_command)
+        secure_train.set_defaults(handler=_train_command)
     rlvr = train_sub.add_parser("rlvr")
     rlvr.add_argument("--real", action="store_true")
     rlvr.add_argument("--allow-gpu", action="store_true")
     rlvr.add_argument("--allow-checkpoints", action="store_true")
     rlvr.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    rlvr.add_argument("--policy", default=str(ROOT / "configs/posttrain/policy.json"))
+    rlvr.add_argument("--policy", default=str(ROOT / "configs/posttrain/recipe-policy.json"))
     rlvr.add_argument("--data", default=str(ROOT / "outputs/posttrain/data"))
     rlvr.add_argument("--output", default=str(ROOT / "outputs/posttrain/runs"))
     rlvr.add_argument("--device", default="cuda:0")
@@ -1217,8 +1392,10 @@ def build_parser() -> argparse.ArgumentParser:
     data_sub = data.add_subparsers(dest="action", required=True, parser_class=GatedParser)
     discover = data_sub.add_parser("discover")
     _explicit_mode(discover)
-    discover.add_argument("--config", default="configs/posttrain/current.json")
-    discover.set_defaults(handler=_secure_command)
+    discover.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
+    discover.add_argument("--out", default=str(ROOT / "outputs/posttrain/data/discovery.json"))
+    discover.add_argument("--format", choices=("json", "markdown"), default="json")
+    discover.set_defaults(handler=_data_discover_command)
     prepare = data_sub.add_parser("prepare")
     prepare.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
     prepare.add_argument("--discovery", default=str(ROOT / "outputs/posttrain/data/discovery.json"))
@@ -1262,7 +1439,7 @@ def build_parser() -> argparse.ArgumentParser:
     mix_probe.add_argument("--allow-gpu", action="store_true")
     mix_probe.add_argument("--allow-checkpoints", action="store_true")
     mix_probe.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    mix_probe.add_argument("--policy", default=str(ROOT / "configs/posttrain/policy.json"))
+    mix_probe.add_argument("--policy", default=str(ROOT / "configs/posttrain/recipe-policy.json"))
     mix_probe.add_argument("--data", default=str(ROOT / "outputs/posttrain/data"))
     mix_probe.add_argument("--output", default=str(ROOT / "outputs/posttrain/mix"))
     mix_probe.add_argument("--device", default="cuda:0")
@@ -1283,59 +1460,56 @@ def build_parser() -> argparse.ArgumentParser:
     merge_sub = merge.add_subparsers(dest="action", required=True, parser_class=GatedParser)
     merge_search = merge_sub.add_parser("search")
     _explicit_mode(merge_search, gpu=True)
-    merge_search.add_argument("--config", default="configs/posttrain/current.json")
+    merge_search.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
     merge_search.add_argument("--budget-minutes", type=float)
-    merge_search.set_defaults(handler=_secure_command)
+    merge_search.add_argument("--runs", default=str(ROOT / "outputs/posttrain/runs"))
+    merge_search.add_argument(
+        "--frontier", default=str(ROOT / "outputs/posttrain/specialist-frontiers.json")
+    )
+    merge_search.add_argument("--out", default=str(ROOT / "outputs/posttrain/merge"))
+    merge_search.add_argument("--format", choices=("json", "markdown"), default="json")
+    merge_search.add_argument("--merge-device", default="cpu")
+    merge_search.add_argument("--device", default="cuda:0")
+    merge_search.set_defaults(handler=_merge_command)
 
     distill = commands.add_parser("distill")
     _explicit_mode(distill, gpu=True)
-    distill.add_argument("--config", default="configs/posttrain/current.json")
+    distill.add_argument("--config", default="configs/posttrain/secure-current.json")
     distill.add_argument("--teacher", required=True)
     distill.add_argument("--teacher-license")
     distill.add_argument("--budget-minutes", type=float)
-    distill.set_defaults(handler=_secure_command)
+    distill.set_defaults(handler=_distill_command)
 
     script_map = {
         "status": "pt_status",
         "report": "pt_report",
         "integrity": "check_posttrain_integrity",
-        "loop": "pt_loop",
     }
     for name, stem in script_map.items():
         command = commands.add_parser(name, add_help=False)
         command.set_defaults(handler=lambda args, value=stem: _script(value, args.remainder))
         command.add_argument("remainder", nargs=argparse.REMAINDER)
+    loop = commands.add_parser("loop", add_help=False)
+    loop.set_defaults(handler=_loop_command)
+    loop.add_argument("remainder", nargs=argparse.REMAINDER)
     promote = commands.add_parser("promote")
     promote.add_argument("--candidate", required=True)
     promote.add_argument("--base-ref", required=True)
-    promote.set_defaults(handler=_secure_command)
+    promote.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
+    promote.add_argument("--baseline")
+    promote.add_argument("--out", default=str(ROOT / "outputs/posttrain/promote"))
+    promote.add_argument("--format", choices=("json", "markdown"), default="json")
+    promote.set_defaults(handler=_promote_command)
     doctor = commands.add_parser("doctor")
     doctor.add_argument("--mode", choices=("train", "eval", "merge", "all"), default="all")
     doctor.add_argument("--real", action="store_true")
     doctor.add_argument("--allow-gpu", action="store_true")
-    doctor.set_defaults(handler=_secure_command)
+    doctor.set_defaults(handler=_doctor_command)
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    secure = (
-        arguments[:1] == ["model"]
-        or arguments[:2] == ["data", "discover"]
-        or (arguments[:1] == ["train"] and arguments[1:2] in (["sft"], ["cpt"], ["preference"]))
-        or arguments[:1] == ["merge"]
-        or arguments[:1] == ["distill"]
-        or arguments[:1] == ["promote"]
-        or arguments[:2] == ["eval", "run"]
-    )
-    if secure:
-        from . import secure_cli
-
-        secure_cli.ROOT = ROOT
-        secure_cli.OUTPUTS = OUTPUTS
-        if "--config" not in arguments and arguments[:1] in (["data"], ["train"], ["merge"]):
-            arguments.extend(["--config", "configs/posttrain/secure-current.json"])
-        return secure_cli.main(arguments)
     args = build_parser().parse_args(arguments)
     return int(args.handler(args))
 

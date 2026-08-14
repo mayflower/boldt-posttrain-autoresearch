@@ -122,17 +122,13 @@ def test_grpo_rejects_unsupported_training_method_before_model_initialization(
         )
 
 
-def test_qlora_grpo_rejects_cpu_before_model_initialization(
-    monkeypatch, tmp_path, tiny_model_dir
-):
+def test_qlora_grpo_rejects_cpu_before_model_initialization(monkeypatch, tmp_path, tiny_model_dir):
     from datasets import Dataset
     from transformers import AutoModelForCausalLM
 
     cfg = config(tiny_model_dir)
     cfg["training"]["method"] = "qlora"
-    rows = Dataset.from_list(
-        [{"prompt": [{"role": "user", "content": "1 + 1"}], "solution": "2"}]
-    )
+    rows = Dataset.from_list([{"prompt": [{"role": "user", "content": "1 + 1"}], "solution": "2"}])
 
     def unexpected_load(*_args, **_kwargs):
         raise AssertionError("model loading must not begin for CPU QLoRA")

@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 from . import config as config_module
 from .artifacts import RUN_ID_RE, EventLog, atomic_write_json, new_run_id, sha256_file
-from .data_pipeline import verify_data_manifest
+from .data_pipeline import load_manifest_rows, verify_data_manifest
 from .distillation import _teacher_license, distill_and_train, extract_prompts
 from .evaluation import _publish_evaluation
 from .frontier import (
@@ -23,7 +23,7 @@ from .policy import Policy, load_policy
 from .preference import _manifest_rows, train_preference_adapter
 from .resolver import OUTPUTS, resolve_model
 from .scoring import create_score, load_baseline
-from .training import load_manifest_rows, train_adapter
+from .training import train_adapter
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -209,10 +209,8 @@ def run_experiment(
         candidate_run_id = lever_result.get("student_run_id") or lever_result.get("run_id")
         if not isinstance(candidate_run_id, str) or candidate_run_id in previous_runs:
             raise LoopError("lever did not produce exactly one fresh candidate run ID")
-        if lever_result.get("status") == "budget_exhausted":
-            verdict.update(status="budget_exhausted", disposition="rejected")
-            verdict["stages"]["lever"] = lever_result
-            exit_code = 1
+        if lever_result.get("status") != "succeeded":
+            raise LoopError(f"lever failed with status {lever_result.get('status')!r}")
         else:
             resolved = resolve_model(
                 policy=policy,

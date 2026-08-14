@@ -322,3 +322,10 @@ def train_preference(
         trainer,
         deadline_callback.stop_reason if deadline_callback else None,
     )
+
+
+from .secure_compat.preference import (  # noqa: E402, F401
+    PreferenceError,
+    _manifest_rows,
+    train_preference_adapter,
+)
