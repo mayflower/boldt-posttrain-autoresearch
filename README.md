@@ -64,7 +64,7 @@ python -m boldt_posttrain.cli merge search --real --allow-gpu --allow-checkpoint
 One deterministic experiment round:
 
 ```bash
-python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247 --budget-minutes 90
+python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247 --budget-minutes 90
 ```
 
 ## Trust Model

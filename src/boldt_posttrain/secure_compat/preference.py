@@ -26,6 +26,7 @@ from ..resolver import CandidateRegistry, OUTPUTS
 from .training import (
     DeadlineCallback,
     _checkpoint_smoke,
+    _completion_outcome,
     collect_model_metadata,
     create_model_and_tokenizer,
     validate_target_modules,
@@ -261,7 +262,7 @@ def train_preference_adapter(
     if not (staging / "chat_template.jinja").exists() and tokenizer.chat_template:
         (staging / "chat_template.jinja").write_text(tokenizer.chat_template)
     _checkpoint_smoke(staging, model_source, revision)
-    status = "budget_exhausted" if callback.exhausted else "succeeded"
+    status, stop_reason = _completion_outcome(callback)
     checkpoint = ArtifactRef.from_path(
         staging,
         role="adapter_checkpoint",
@@ -289,7 +290,7 @@ def train_preference_adapter(
         "negative_count": len(rows) if method == "kto" else None,
         "log_history": trainer.state.log_history,
         "wall_clock_seconds": time.monotonic() - started,
-        "stop_reason": status,
+        "stop_reason": stop_reason,
     }
     run_staging.mkdir(parents=True)
     now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()

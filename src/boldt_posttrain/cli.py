@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from . import config as cfgmod
+from .artifacts import atomic_write_json, new_run_id
 from .bootstrap import run_bootstrap
 from .data_pipeline import (
     FastTextLanguageIdentifier,
@@ -36,7 +37,13 @@ from .evaluation import (
     run_real_evaluation,
 )
 from .failure_mining import build_synthesis_tasks, mine_failures, synthesize_verified
-from .frontier import aggregate, current_frontier, update_specialist_frontiers
+from .frontier import (
+    aggregate,
+    current_frontier,
+    current_frontier_hash,
+    promote_candidate,
+    update_specialist_frontiers,
+)
 from .policy import load_policy
 from .provenance import append_event, new_run_card, stamp, write_run_card
 from .rlvr import iter_rlvr_rows, train_rlvr
@@ -97,17 +104,37 @@ def _forward(
     return _script(stem, argv)
 
 
+def _plan(operation: str, config: str | Path | None = None) -> dict[str, Any]:
+    plan_id = new_run_id("plan")
+    path = OUTPUTS / "plans" / plan_id / "plan.json"
+    document = {
+        "schema_version": 1,
+        "plan_id": plan_id,
+        "operation": operation,
+        "config": str(config) if config is not None else None,
+    }
+    atomic_write_json(path, document)
+    return {"status": "succeeded", "mode": "dry_run", "plan": str(path)}
+
+
 def _eval_run_command(args: argparse.Namespace) -> int:
-    if args.real and args.candidate:
-        try:
-            resolve_model(
-                policy=load_policy(),
-                candidate=args.candidate,
-                outputs_root=OUTPUTS,
-            )
-        except Exception as exc:
-            print(json.dumps({"status": "failed", "error": str(exc)}))
-            return 3
+    try:
+        resolved = resolve_model(
+            policy=load_policy(),
+            candidate=args.candidate,
+            model=args.model,
+            outputs_root=OUTPUTS,
+            external_roots=tuple(Path(item) for item in args.external_root),
+        )
+        if resolved.artifact is not None:
+            model_path = Path(resolved.artifact["path"])
+            args.model = str(model_path if model_path.is_absolute() else ROOT / model_path)
+        else:
+            args.model = resolved.base_model["repo_id"]
+        args.revision = resolved.base_model["revision"]
+    except Exception as exc:
+        print(json.dumps({"status": "failed", "error": str(exc)}))
+        return 3
     return _forward(
         args,
         "pt_eval",
@@ -121,6 +148,7 @@ def _eval_run_command(args: argparse.Namespace) -> int:
             "profile",
             "suite",
             "budget_minutes",
+            "revision",
         ),
         ("real", "dry_run", "allow_gpu"),
     )
@@ -194,22 +222,7 @@ def _data_discover_command(args: argparse.Namespace) -> int:
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             print(json.dumps({"status": "failed", "error": str(exc), "exit_code": 2}))
             return 2
-        plan_id = f"plan-data-discover-{stamp()}"
-        path = OUTPUTS / "plans" / plan_id / "plan.json"
-        path.parent.mkdir(parents=True, exist_ok=False)
-        path.write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "plan_id": plan_id,
-                    "operation": "data-discover",
-                    "config": str(config_path),
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        print(json.dumps({"status": "succeeded", "mode": "dry_run", "plan": str(path)}))
+        print(json.dumps(_plan("data-discover", config_path)))
         return 0
     return _forward(
         args,
@@ -237,21 +250,33 @@ def _train_command(args: argparse.Namespace) -> int:
 
 
 def _merge_command(args: argparse.Namespace) -> int:
+    if args.real and not args.allow_checkpoints:
+        print(json.dumps({"status": "failed", "error": "--real requires --allow-checkpoints"}))
+        return 2
     return _forward(
         args,
         "pt_merge_search",
         ("config", "runs", "frontier", "out", "format", "merge_device", "device", "budget_minutes"),
-        ("real", "dry_run", "allow_gpu"),
+        ("real", "dry_run", "allow_gpu", "allow_checkpoints"),
     )
 
 
 def _promote_command(args: argparse.Namespace) -> int:
-    return _forward(
-        args,
-        "pt_promote",
-        ("candidate", "config", "baseline", "base_ref", "out", "format"),
-        (),
-    )
+    try:
+        policy = load_policy()
+        result = promote_candidate(
+            args.candidate,
+            base_ref=args.base_ref,
+            expected_current_sha256=current_frontier_hash(OUTPUTS / "frontier"),
+            policy=policy,
+            outputs_root=OUTPUTS,
+            repository_root=ROOT,
+        )
+    except Exception as exc:
+        print(json.dumps({"status": "failed", "error": str(exc)}))
+        return 5
+    print(json.dumps(result, sort_keys=True))
+    return 0
 
 
 def _model_command(args: argparse.Namespace) -> int:
@@ -321,11 +346,48 @@ def _distill_command(args: argparse.Namespace) -> int:
 
 
 def _loop_command(args: argparse.Namespace) -> int:
-    forwarded = list(args.remainder)
-    if forwarded[:1] == ["run"]:
-        forwarded.pop(0)
-    forwarded = [item for item in forwarded if item != "--allow-checkpoints"]
-    return _script("pt_loop", forwarded)
+    if args.dry_run:
+        config_path = Path(args.config)
+        if not config_path.is_absolute():
+            config_path = ROOT / config_path
+        try:
+            cfgmod.load_experiment(config_path)
+        except Exception as exc:
+            print(json.dumps({"status": "failed", "error": str(exc), "exit_code": 2}))
+            return 2
+        print(json.dumps(_plan("loop-run", config_path)))
+        return 0
+    if not (args.allow_gpu and args.allow_checkpoints):
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error": "loop run requires --real --allow-gpu --allow-checkpoints",
+                }
+            )
+        )
+        return 2
+    from .loop import run_experiment
+
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = ROOT / config_path
+    try:
+        result, exit_code = run_experiment(
+            config_path=config_path,
+            base_ref=args.base_ref,
+            budget_minutes=args.budget_minutes,
+            promote=args.promote,
+            allow_checkpoints=args.allow_checkpoints,
+            allow_gpu=args.allow_gpu,
+            outputs_root=OUTPUTS,
+            repository_root=ROOT,
+        )
+    except Exception as exc:
+        print(json.dumps({"status": "failed", "error": str(exc)}))
+        return 4
+    print(json.dumps(result, sort_keys=True))
+    return exit_code
 
 
 def main_status(argv: Optional[Sequence[str]] = None) -> int:
@@ -1291,8 +1353,10 @@ def build_parser() -> argparse.ArgumentParser:
     eval_sub = evaluation.add_subparsers(dest="action", required=True)
     eval_run = eval_sub.add_parser("run")
     eval_run.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    eval_run.add_argument("--model", default=None)
-    eval_run.add_argument("--candidate", default=None)
+    eval_reference = eval_run.add_mutually_exclusive_group(required=True)
+    eval_reference.add_argument("--model", default=None)
+    eval_reference.add_argument("--candidate", default=None)
+    eval_run.add_argument("--external-root", action="append", default=[])
     eval_run.add_argument("--label", default=None)
     eval_run.add_argument("--out", default=str(ROOT / "outputs/posttrain/evals"))
     eval_run.add_argument("--device", default="cuda:0")
@@ -1489,16 +1553,18 @@ def build_parser() -> argparse.ArgumentParser:
         command = commands.add_parser(name, add_help=False)
         command.set_defaults(handler=lambda args, value=stem: _script(value, args.remainder))
         command.add_argument("remainder", nargs=argparse.REMAINDER)
-    loop = commands.add_parser("loop", add_help=False)
-    loop.set_defaults(handler=_loop_command)
-    loop.add_argument("remainder", nargs=argparse.REMAINDER)
+    loop = commands.add_parser("loop")
+    loop_sub = loop.add_subparsers(dest="action", required=True, parser_class=GatedParser)
+    loop_run = loop_sub.add_parser("run")
+    _explicit_mode(loop_run, gpu=True)
+    loop_run.add_argument("--config", default="configs/posttrain/secure-current.json")
+    loop_run.add_argument("--base-ref", required=True)
+    loop_run.add_argument("--budget-minutes", type=float, required=True)
+    loop_run.add_argument("--promote", action="store_true")
+    loop_run.set_defaults(handler=_loop_command)
     promote = commands.add_parser("promote")
     promote.add_argument("--candidate", required=True)
     promote.add_argument("--base-ref", required=True)
-    promote.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    promote.add_argument("--baseline")
-    promote.add_argument("--out", default=str(ROOT / "outputs/posttrain/promote"))
-    promote.add_argument("--format", choices=("json", "markdown"), default="json")
     promote.set_defaults(handler=_promote_command)
     doctor = commands.add_parser("doctor")
     doctor.add_argument("--mode", choices=("train", "eval", "merge", "all"), default="all")

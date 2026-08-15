@@ -107,10 +107,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--real", action="store_true")
     ap.add_argument("--allow-gpu", action="store_true")
+    ap.add_argument("--allow-checkpoints", action="store_true")
     ap.add_argument("--merge-device", default="cpu")
     ap.add_argument("--device", default="cuda:0", help="explicit evaluation device")
     ap.add_argument("--budget-minutes", type=float, default=90)
     args = ap.parse_args(argv)
+    if args.real and not args.allow_checkpoints:
+        print(
+            json.dumps(
+                {"status": "failed", "error": "--real requires --allow-checkpoints"},
+                ensure_ascii=False,
+            )
+        )
+        return 2
     dry = not args.real
     deadline = time.monotonic() + args.budget_minutes * 60
 

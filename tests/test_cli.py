@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -131,3 +132,102 @@ def test_recipe_dry_run_executes_in_isolated_output(tmp_path: Path, capsys):
     result = json.loads(capsys.readouterr().out)
     assert result["mode"] == "dry_run"
     assert (Path(result["out"]) / "run_card.json").is_file()
+
+
+def test_eval_candidate_forwards_verified_checkpoint_and_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import boldt_posttrain.cli as cli
+
+    checkpoint = tmp_path / "adapter"
+    captured = {}
+
+    monkeypatch.setattr(
+        cli,
+        "resolve_model",
+        lambda **_kwargs: SimpleNamespace(
+            artifact={"path": str(checkpoint)},
+            base_model={"repo_id": "org/model", "revision": "a" * 40},
+        ),
+    )
+
+    def fake_script(stem, argv):
+        captured.update(stem=stem, argv=argv)
+        return 0
+
+    monkeypatch.setattr(cli, "_script", fake_script)
+    assert main(["eval", "run", "--real", "--allow-gpu", "--candidate", "candidate-id"]) == 0
+    assert captured["stem"] == "pt_eval"
+    assert captured["argv"][captured["argv"].index("--model") + 1] == str(checkpoint)
+    assert captured["argv"][captured["argv"].index("--revision") + 1] == "a" * 40
+
+
+def test_loop_run_uses_protected_experiment_api(tmp_path: Path, monkeypatch, capsys):
+    import boldt_posttrain.cli as cli
+    import boldt_posttrain.loop as loop
+
+    captured = {}
+
+    def fake_run_experiment(**kwargs):
+        captured.update(kwargs)
+        return {"status": "succeeded", "loop_id": "loop-test"}, 0
+
+    monkeypatch.setattr(loop, "run_experiment", fake_run_experiment)
+    monkeypatch.setattr(cli, "OUTPUTS", tmp_path / "outputs/posttrain")
+    assert (
+        main(
+            [
+                "loop",
+                "run",
+                "--real",
+                "--allow-gpu",
+                "--allow-checkpoints",
+                "--config",
+                "configs/posttrain/secure-current.json",
+                "--base-ref",
+                "HEAD",
+                "--budget-minutes",
+                "10",
+            ]
+        )
+        == 0
+    )
+    assert captured["base_ref"] == "HEAD"
+    assert captured["outputs_root"] == tmp_path / "outputs/posttrain"
+    assert json.loads(capsys.readouterr().out)["loop_id"] == "loop-test"
+
+
+def test_promote_uses_protected_frontier_api(tmp_path: Path, monkeypatch, capsys):
+    import boldt_posttrain.cli as cli
+
+    captured = {}
+    monkeypatch.setattr(cli, "OUTPUTS", tmp_path / "outputs/posttrain")
+    monkeypatch.setattr(cli, "current_frontier_hash", lambda _path: "frontier-hash")
+
+    def fake_promote(candidate, **kwargs):
+        captured.update(candidate=candidate, **kwargs)
+        return {"status": "promoted", "candidate_run_id": candidate}
+
+    monkeypatch.setattr(cli, "promote_candidate", fake_promote)
+    assert main(["promote", "--candidate", "candidate-id", "--base-ref", "HEAD"]) == 0
+    assert captured["candidate"] == "candidate-id"
+    assert captured["expected_current_sha256"] == "frontier-hash"
+    assert captured["outputs_root"] == tmp_path / "outputs/posttrain"
+    assert json.loads(capsys.readouterr().out)["status"] == "promoted"
+
+
+def test_real_merge_requires_and_forwards_checkpoint_permission(monkeypatch, capsys):
+    import boldt_posttrain.cli as cli
+
+    captured = {}
+
+    def fake_forward(*args):
+        captured["args"] = args
+        return 0
+
+    monkeypatch.setattr(cli, "_forward", fake_forward)
+    base = ["merge", "search", "--real", "--allow-gpu"]
+    assert main(base) == 2
+    assert "allow-checkpoints" in json.loads(capsys.readouterr().out)["error"]
+    assert main([*base, "--allow-checkpoints"]) == 0
+    assert "allow_checkpoints" in captured["args"][3]

@@ -73,6 +73,9 @@ def test_deadline_callback_stops_at_reserved_boundary():
 
 
 def test_reload_verified_budget_stop_is_successful():
+    from boldt_posttrain.secure_compat.preference import (
+        _completion_outcome as preference_completion_outcome,
+    )
     from boldt_posttrain.secure_compat.training import (
         DeadlineCallback as SecureDeadlineCallback,
         _completion_outcome,
@@ -81,6 +84,7 @@ def test_reload_verified_budget_stop_is_successful():
     callback = SecureDeadlineCallback(float("inf"))
     callback.exhausted = True
     assert _completion_outcome(callback) == ("succeeded", "budget_limit")
+    assert preference_completion_outcome(callback) == ("succeeded", "budget_limit")
 
 
 def test_secure_qlora_honors_explicit_cuda_device(monkeypatch):

@@ -58,6 +58,7 @@ def run_eval(
     device="cuda:0",
     suite_path=None,
     budget_minutes=90,
+    revision=None,
 ):
     suite = cfg.get("eval", {}).get("suite", "german-core")
     out_dir = pathlib.Path(out_dir)
@@ -75,6 +76,7 @@ def run_eval(
             note=f"candidate={candidate}",
         )
         summary["profile"] = profile
+        summary["model_revision"] = revision
         summary["technical_error_count"] = 0
         summary["model_error_count"] = 0
         status = "ok"
@@ -100,6 +102,7 @@ def run_eval(
                 config=cfg,
                 deadline=time.monotonic() + budget_minutes * 60,
             )
+            summary["model_revision"] = revision
             if profile == "promotion" and summary.get("status") == "ok":
                 baseline_path = ROOT / "outputs/posttrain/baseline/promotion/current.json"
                 baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
@@ -128,6 +131,7 @@ def run_eval(
             )
             summary.update(
                 profile=profile,
+                model_revision=revision,
                 technical_error_count=1,
                 model_error_count=0,
                 technical_errors={error_kind: 1},
@@ -157,6 +161,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
     ap.add_argument("--model", default=None, help="model id / checkpoint path to evaluate")
     ap.add_argument("--candidate", default=None, help="candidate label (e.g. latest / a run id)")
+    ap.add_argument("--revision", default=None, help=argparse.SUPPRESS)
     ap.add_argument("--label", default=None, help="output label under the evals dir")
     ap.add_argument("--out", default=str(ROOT / "outputs/posttrain/evals"))
     ap.add_argument("--dry-run", action="store_true")
@@ -174,6 +179,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     dry = not args.real
 
     cfg = cfgmod.resolve_config(pathlib.Path(args.config))
+    if args.revision is not None:
+        cfg.setdefault("training", {})["revision"] = args.revision
     label = _label(args)
     model = args.model or cfg.get("training", {}).get("base_model")
     if args.suite:
@@ -202,6 +209,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         device=args.device,
         suite_path=suite_path,
         budget_minutes=args.budget_minutes,
+        revision=args.revision,
     )
 
     print(
