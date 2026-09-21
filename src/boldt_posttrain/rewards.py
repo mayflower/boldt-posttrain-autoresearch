@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 
 from .data_pipeline import FastTextLanguageIdentifier
 from .evaluation import is_refusal
+from .verifiers import numeric_matches_ground_truth
 
 REWARD_VERSION = 1
 
@@ -39,13 +39,9 @@ def numeric_reward(
 ) -> Optional[float]:
     if not _applicable(task_type, "numeric"):
         return None
-    matches = re.findall(r"(?<!\w)[-+]?\d+(?:[.,]\d+)?", completion_text(completion))
-    if not matches:
-        return 0.0
-    expected = float(ground_truth["value"])
-    value = float(matches[-1].replace(",", "."))
-    tolerance = float(ground_truth.get("tolerance", 0.0))
-    return float(abs(value - expected) <= tolerance)
+    # Shared with the evaluation validator and failure-mining synthesis; see
+    # boldt_posttrain.verifiers for why the answer must be the whole output.
+    return float(numeric_matches_ground_truth(completion_text(completion), ground_truth))
 
 
 def json_schema_reward(

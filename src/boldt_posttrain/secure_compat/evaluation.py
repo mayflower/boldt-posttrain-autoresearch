@@ -29,6 +29,7 @@ from ..artifacts import (
 )
 from ..policy import Policy, load_policy
 from ..resolver import OUTPUTS, ResolvedModelRef, load_tokenizer, resolve_model
+from ..verifiers import numeric_matches
 
 ROOT = Path(__file__).resolve().parents[3]
 SUITE_PATH = ROOT / "data/eval/german-core-v1.jsonl"
@@ -189,11 +190,10 @@ def score_output(case: Mapping[str, Any], output: str) -> tuple[float, dict[str,
             all(position >= 0 for position in positions) and positions == sorted(positions)
         )
     elif kind == "numeric":
-        match = re.fullmatch(r"[-+]?\d+(?:\.\d+)?", stripped)
+        # Same rule as the RL reward and failure-mining synthesis, so a candidate
+        # is trained on exactly what it is scored on.
         score = float(
-            bool(match)
-            and abs(float(stripped) - float(parameters["expected"]))
-            <= float(parameters.get("tolerance", 0))
+            numeric_matches(stripped, parameters["expected"], parameters.get("tolerance", 0))
         )
     elif kind == "language":
         words = set(re.findall(r"[A-Za-zÄÖÜäöüß]+", stripped.casefold()))

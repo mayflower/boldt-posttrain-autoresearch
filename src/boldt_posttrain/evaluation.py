@@ -22,6 +22,7 @@ from .data_pipeline import (
     language_identifier_from_config,
     sha256_bytes,
 )
+from .policy import PolicyError, load_policy
 from .training import load_tokenizer
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -203,7 +204,12 @@ def _default_validate(case: Mapping[str, Any], output: str) -> Dict[str, Any]:
     if isinstance(expected, str):
         correct = expected.strip().casefold() == output.strip().casefold()
     elif isinstance(expected, list):
-        correct = all(str(value).casefold() in output.casefold() for value in expected)
+        # Containment alone accepted "Beta Alpha" for ["Alpha", "Beta"]. The
+        # cases that carry a list say "in dieser Reihenfolge", so the positions
+        # have to be present and increasing.
+        haystack = output.casefold()
+        positions = [haystack.find(str(value).casefold()) for value in expected]
+        correct = all(position >= 0 for position in positions) and positions == sorted(positions)
     else:
         correct = bool(output.strip())
     return {"correct": correct, "errors": [] if correct else ["incorrect"]}
@@ -333,8 +339,14 @@ def run_lm_eval(
     include_path: Optional[Path] = None,
     peft_adapter: Optional[str] = None,
     tokenizer_ref: Optional[str] = None,
+    revision: Optional[str] = None,
 ) -> Dict[str, Any]:
     model_arguments = f"pretrained={model}"
+    # Without this the subprocess resolves the Hub reference to whatever the
+    # branch currently points at, while local generation loads the pinned
+    # revision -- the two halves of one evaluation would score different weights.
+    if revision and not Path(model).exists():
+        model_arguments += f",revision={revision}"
     if peft_adapter is not None:
         model_arguments += f",peft={peft_adapter}"
         if tokenizer_ref is None:
@@ -522,6 +534,59 @@ def make_summary(
     }
 
 
+def _verified_data_provenance(data_dir: Path) -> Dict[str, Dict[str, Any]]:
+    """Derive the leakage and license blocks from the prepared-data artifacts.
+
+    These two blocks are hard gates in the scorer. Asserting success without a
+    corresponding artifact would make the gate decorative: a hash protects the
+    integrity of a claim, not its truth. Anything that cannot be read and tied
+    back to the manifest is reported as unchecked, which the scorer fails closed
+    on, rather than as verified.
+    """
+    unchecked = {
+        "leakage": {"status": "not_checked", "hits": None},
+        "license": {"status": "unknown", "usable": None},
+    }
+    try:
+        manifest = json.loads((data_dir / "manifest.json").read_text(encoding="utf-8"))
+        report = json.loads((data_dir / "leakage_report.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return unchecked
+    blocks = dict(unchecked)
+
+    status = str(report.get("status", "")).lower()
+    hits = report.get("hits", report.get("overlap_hits"))
+    hits = int(hits) if isinstance(hits, (int, float)) and not isinstance(hits, bool) else None
+    manifest_hash = manifest.get("decontamination_hash")
+    report_hash = report.get("decontamination_hash")
+    if status not in ("clean", "verified_clean", "ok") or hits is None:
+        blocks["leakage"] = {"status": status or "not_checked", "hits": hits}
+    elif report_hash is not None and manifest_hash is not None and report_hash != manifest_hash:
+        # The report exists but describes a different decontamination corpus.
+        blocks["leakage"] = {"status": "stale", "hits": hits}
+    else:
+        blocks["leakage"] = {"status": "verified_clean", "hits": hits}
+
+    try:
+        discovery = json.loads((data_dir / "discovery.json").read_text(encoding="utf-8"))
+        allowed = set(load_policy().document["data"]["allowed_licenses"])
+    except (OSError, json.JSONDecodeError, PolicyError, KeyError):
+        return blocks
+    entries = discovery.get("sources")
+    if not isinstance(entries, list) or not entries:
+        return blocks
+    licenses = [entry.get("normalized_spdx_license") for entry in entries]
+    if all(name in allowed for name in licenses):
+        blocks["license"] = {"status": "reviewed_usable", "usable": True, "licenses": licenses}
+    else:
+        blocks["license"] = {
+            "status": "not_usable",
+            "usable": False,
+            "licenses": sorted({str(name) for name in licenses if name not in allowed}),
+        }
+    return blocks
+
+
 def run_real_evaluation(
     *,
     model_ref: str,
@@ -595,6 +660,7 @@ def run_real_evaluation(
         "reasoning": "reasoning_core",
         "longcontext": "longcontext",
         "safety": "safety",
+        "coding": "coding",
     }
     metrics = {
         dimension_names[key]: mean(values)
@@ -623,8 +689,8 @@ def run_real_evaluation(
     raw_path.write_text(json.dumps(local_results, ensure_ascii=False, indent=2), encoding="utf-8")
     metrics["german_language_retention"] = language_retention(local_results, language_identifier)
     metrics["english_bleed_rate"] = 1.0 - metrics["german_language_retention"]
-    metrics["leakage"] = {"status": "clean", "hits": 0}
-    metrics["license"] = {"status": "reviewed_usable", "usable": True}
+    configured_data_dir = ROOT / config.get("paths", {}).get("data", "outputs/posttrain/data")
+    metrics.update(_verified_data_provenance(configured_data_dir))
     tasks = list(eval_cfg.get("lm_eval_tasks", []))
     if tasks:
         lm_eval_tokenizer = Path(output_dir) / "lm_eval_tokenizer"
@@ -639,6 +705,7 @@ def run_real_evaluation(
             timeout_seconds=max(1, int(deadline - time.monotonic())),
             peft_adapter=adapter_ref,
             tokenizer_ref=str(lm_eval_tokenizer),
+            revision=training_cfg.get("revision"),
         )
         metrics["lm_eval"] = lm_result["metrics"]
     decontamination_hash = data_cfg.get("decontamination_hash")

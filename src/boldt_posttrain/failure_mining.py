@@ -16,6 +16,7 @@ from .data_pipeline import (
     sha256_bytes,
     verify_hashed_artifact,
 )
+from .verifiers import numeric_matches_ground_truth
 
 CATEGORIES = {
     "instruction",
@@ -177,11 +178,9 @@ def verify_candidate(
     ground = task.get("ground_truth", {})
     kind = task.get("task_type")
     if kind == "numeric":
-        match = re.search(r"[-+]?\d+(?:[.,]\d+)?", candidate)
-        return (
-            match is not None and float(match.group().replace(",", ".")) == ground["value"],
-            "numeric_mismatch",
-        )
+        # Same rule as the evaluation validator and the RL reward: a synthesized
+        # chosen/rejected pair must not disagree with what the scorer measures.
+        return numeric_matches_ground_truth(candidate, ground), "numeric_mismatch"
     if kind == "json_schema":
         try:
             import jsonschema

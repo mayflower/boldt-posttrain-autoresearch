@@ -175,6 +175,10 @@ def make_peft_config(
         raise ValueError("lora_init must be 'default' or 'pissa_niter_4'")
     if recipe_name == "pissa_niter_4" and training.get("use_rslora"):
         raise ValueError("PiSSA and rsLoRA are separate supported recipes, not a combined recipe")
+    if recipe_name == "pissa_niter_4" and training.get("method") == "qlora":
+        # PiSSA decomposes the base weights and needs them back at save time to
+        # convert the adapter; a 4-bit base cannot supply them losslessly.
+        raise ValueError("lora_init 'pissa_niter_4' requires an unquantized base, not qlora")
     return LoraConfig(
         r=int(training["lora_r"]),
         lora_alpha=int(training["lora_alpha"]),
@@ -186,6 +190,46 @@ def make_peft_config(
         modules_to_save=list(modules_to_save) if modules_to_save else None,
         ensure_weight_tying=ensure_weight_tying,
     )
+
+
+def _pissa_recipe(training: Mapping[str, Any]) -> bool:
+    return str(training.get("lora_init", "default")) == "pissa_niter_4"
+
+
+def make_pissa_initial_callback(path: Path) -> Any:
+    """Capture the adapter before the first optimizer step.
+
+    PiSSA initialisation rewrites the base weights, so a plain ``save_pretrained``
+    produces an adapter that no longer matches the base it will be reloaded onto.
+    Measured on the CPU fixture: identical logits for LoRA and rsLoRA after a
+    save/reload round trip, but max|delta| 0.0397 for ``pissa_niter_4``. PEFT can
+    convert the adapter back into a plain LoRA delta, but only when it is handed
+    the pre-training adapter -- which exists only before training starts.
+    """
+    from transformers import TrainerCallback
+
+    class PissaInitialAdapter(TrainerCallback):
+        def __init__(self, destination: Path) -> None:
+            self.destination = destination
+            self.captured = False
+
+        def on_train_begin(self, args, state, control, model=None, **kwargs):  # noqa: ANN001
+            if model is not None and not self.captured:
+                model.save_pretrained(str(self.destination))
+                self.captured = True
+            return control
+
+    return PissaInitialAdapter(path)
+
+
+def save_trained_adapter(trainer: Any, destination: Path, pissa_initial: Optional[Path]) -> None:
+    """Persist the trained adapter so that reloading reproduces its outputs."""
+    if pissa_initial is not None and pissa_initial.exists():
+        trainer.model.save_pretrained(
+            str(destination), path_initial_model_for_weight_conversion=str(pissa_initial)
+        )
+        return
+    trainer.save_model(str(destination))
 
 
 def evaluation_interval(planned_optimizer_steps: int) -> int:
@@ -698,8 +742,16 @@ def _train_real(
     trainer_dir = out_dir / "trainer"
     adapter_path = out_dir / "adapter"
     adapter_staging = out_dir / ".adapter-staging"
+    pissa_initial = out_dir / ".pissa-initial" if _pissa_recipe(training_cfg) else None
     started = time.monotonic()
     if kind == "preference":
+        if _pissa_recipe(training_cfg):
+            raise ValueError(
+                "lora_init 'pissa_niter_4' is not supported for preference training: the "
+                "pre-training adapter needed for the PiSSA-to-LoRA conversion cannot be "
+                "captured inside train_preference, and saving without it yields an adapter "
+                "that does not reload to the trained model"
+            )
         method = str(cfg.get("preference", {}).get("method", "dpo"))
         if method == "orpo" and training_cfg.get("use_liger_kernel"):
             raise ValueError("the locked ORPO trainer has no enabled Liger path")
@@ -754,7 +806,11 @@ def _train_real(
             eval_dataset=eval_dataset,
             processing_class=tokenizer,
             peft_config=peft_config,
-            callbacks=[deadline_callback],
+            callbacks=(
+                [deadline_callback]
+                if pissa_initial is None
+                else [deadline_callback, make_pissa_initial_callback(pissa_initial)]
+            ),
             optimizers=(optimizer, None) if optimizer is not None else (None, None),
         )
         result = trainer.train()
@@ -767,7 +823,7 @@ def _train_real(
             evaluations.append(dict(explicit) | {"step": trainer.state.global_step})
     if has_validation and not evaluations:
         raise RuntimeError("validation is enabled but the trainer produced no validation loss")
-    trainer.save_model(str(adapter_staging))
+    save_trained_adapter(trainer, adapter_staging, pissa_initial)
     if hasattr(tokenizer, "save_pretrained"):
         tokenizer.save_pretrained(str(adapter_staging))
     _verify_modules_to_save(adapter_staging, cpt_modules)
@@ -779,6 +835,8 @@ def _train_real(
     )
     adapter_staging.replace(adapter_path)
     shutil.rmtree(trainer_dir, ignore_errors=True)
+    if pissa_initial is not None:
+        shutil.rmtree(pissa_initial, ignore_errors=True)
     stop_reason = (
         deadline_callback.stop_reason
         or getattr(result, "stop_reason", None)

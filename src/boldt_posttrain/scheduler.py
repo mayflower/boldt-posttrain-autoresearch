@@ -199,28 +199,42 @@ def build_mix_plan(
         utilities[group] = max(0.0, delta / minutes)
     total = sum(utilities.values())
     weights = {group: (utility / total if total else 0.0) for group, utility in utilities.items()}
-    required = {
-        group: float(weight) for group, weight in minimum_weights.items() if group in weights
-    }
-    if sum(required.values()) > 1.0:
+
+    # A mandated minimum for a group that no probe covers cannot be met. Dropping
+    # it silently used to turn a pure "general" mix into status "ok" while the
+    # safety and language minimums went unenforced.
+    absent = sorted(group for group in minimum_weights if group not in weights)
+    if absent:
+        raise ValueError(f"no probe covers required mix groups: {', '.join(absent)}")
+
+    floors = {group: float(minimum_weights.get(group, 0.0)) for group in weights}
+    if any(floor < 0.0 for floor in floors.values()):
+        raise ValueError("minimum mix weights must not be negative")
+    floor_total = sum(floors.values())
+    if floor_total > 1.0 + 1e-12:
         raise ValueError("minimum mix weights exceed one")
-    for group, floor in required.items():
-        weights[group] = max(weights[group], floor)
-    excess = sum(weights.values()) - 1.0
-    if excess > 0:
-        adjustable = [group for group in weights if group not in required and weights[group] > 0]
-        adjustable_total = sum(weights[group] for group in adjustable)
-        if adjustable_total < excess - 1e-12:
-            raise ValueError("minimum weights leave no feasible normalized mix")
-        for group in adjustable:
-            weights[group] -= excess * weights[group] / adjustable_total
-    elif excess < 0:
-        positive = [group for group, weight in weights.items() if weight > 0]
-        if not positive:
+
+    # Normalize subject to the floors: every group may give up the share it holds
+    # ABOVE its own floor, including groups that have a floor. Restricting the
+    # reduction to floorless groups rejected feasible mixes -- safety 0.9 /
+    # language 0.1 with floors 0.1 / 0.2 is solvable as 0.8 / 0.2.
+    headroom = 1.0 - floor_total
+    slack = {group: max(0.0, weights[group] - floors[group]) for group in weights}
+    slack_total = sum(slack.values())
+    if slack_total > 0:
+        weights = {
+            group: floors[group] + headroom * slack[group] / slack_total for group in weights
+        }
+    elif headroom > 0:
+        # Every group sits at or below its floor; distribute what is left by utility.
+        utility_total = sum(utilities.values())
+        if utility_total <= 0:
             raise ValueError("all source probes have non-positive utility")
-        positive_total = sum(weights[group] for group in positive)
-        for group in positive:
-            weights[group] += (-excess) * weights[group] / positive_total
+        weights = {
+            group: floors[group] + headroom * utilities[group] / utility_total for group in weights
+        }
+    else:
+        weights = dict(floors)
     return {
         "schema_version": 1,
         "status": "ok",

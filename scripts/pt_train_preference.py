@@ -31,7 +31,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--specialist", default="preference-de")
     ap.add_argument("--out", default=str(ROOT / "outputs/posttrain/runs"))
     ap.add_argument("--data", default=str(ROOT / "outputs/posttrain/data"))
-    ap.add_argument("--budget-minutes", type=int, default=90)
+    # float, not int: the CLI declares this as float and forwards str(value),
+    # so an int parser here rejects the documented "--budget-minutes 90" as "90.0".
+    ap.add_argument("--budget-minutes", type=float, default=90)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--real", action="store_true")
     ap.add_argument("--allow-gpu", action="store_true")
