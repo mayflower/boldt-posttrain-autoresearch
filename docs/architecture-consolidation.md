@@ -1,0 +1,86 @@
+# Architecture consolidation plan
+
+The repository runs two parallel systems under one CLI. This document maps them
+precisely and sets the order in which they should be merged. It is the plan the
+audit asked for ("ein gemeinsames Run-Format, eine Kandidatenauflösung, eine
+Evaluation und ein Scoring ... die bestehenden Erzeuger und Verbraucher
+zusammenführen").
+
+## The two systems
+
+| Concern | System A ("recipe", top-level) | System B ("secure", canonical) |
+|---|---|---|
+| Config schema | `configs/posttrain/current.json` (`extends` base.json, `recipe-policy.json`, `org`, `sources[].dataset/configs/splits`) | `configs/posttrain/secure-current.json` (`schema_version`, `policy.json`, `sources[].dataset_id/config/split`) |
+| Config loader | `config.resolve_config` (deep-merge `extends`) | `secure_compat.config.load_experiment` |
+| Training producer | `training.run_training_trial` → `_train_real` | `secure_compat.training.train_adapter` |
+| Run id | `{specialist}-{kind}-{real|dry}-{stamp}` (no microseconds, no random suffix) | `artifacts.new_run_id` → matches `RUN_ID_RE` |
+| Run card | `provenance.new_run_card` (`model` is a string; own `validate_run_card`) | `artifacts` run card (`model` is a structured dict; event-chained) |
+| Event chain | none | `artifacts.EventLog` (`events.jsonl` + head) |
+| Evaluation | `evaluation.run_real_evaluation` (dev/proxy, `_default_validate` + top-level scorers) | `secure_compat.evaluation._publish_evaluation` (`score_output`, full validators) |
+| Scoring | `scoring` top-level defs | `secure_compat.scoring.create_score` |
+| Frontier | `frontier` top-level defs | `secure_compat.frontier` |
+| Candidate resolution | — (produces cards the resolver rejects) | `resolver.resolve_candidate` |
+| CLI entry points | `train`, `eval run`, `baseline`, `score`, `promote` | `loop run`, `distill` |
+
+The top-level modules (`config`, `data_pipeline`, `distillation`, `evaluation`,
+`frontier`, `merge`, `preference`, `provenance`, `scoring`, `training`) are each
+a partial second implementation **plus** a re-export of the secure twin at the
+end of the file. `secure_compat` in turn imports the shared leaves back from the
+top level (`artifacts`, `policy`, `resolver`, `verifiers`).
+
+## Why this is a correctness problem, not only duplication
+
+- **P0: manual candidates cannot be evaluated.** `resolver.resolve_candidate`
+  (used by `eval run --candidate`, `score`, `promote`) validates cards with
+  `artifacts.validate_run_card` and requires a structured `model` dict, a
+  canonical run id, and a successful entry in the hash-chained event log.
+  `run_training_trial` writes none of these, so the documented
+  "train → evaluate the returned id → score → promote" chain is broken. Only the
+  `loop`, which uses `train_adapter`, connects end to end.
+- **The config switch hides what ran.** `evaluation._publish_evaluation` rewrites
+  `current.json` to `secure-current.json` by filename and monkeypatches
+  `generate_cases`/`run_lm_eval` into `secure_compat` at call time. It exists
+  because the two config schemas are incompatible and the tests
+  (`tests/artifact_chain.py`, `tests/test_baseline.py`) feed the recipe schema
+  into the secure evaluator. It is load-bearing today, which is exactly why the
+  schemas must merge before it can go.
+
+## Canonical target
+
+**System B (secure) is canonical.** It is the connected, integrity-bearing path:
+canonical run ids, event chain, structured model provenance, real validators,
+and a resolver that consumes its own producer's output. System A is the earlier
+"recipe" path; its distinguishing artifacts (recipe run ids, string `model`,
+no events) are the source of the P0. Consolidation means routing System A's CLI
+verbs onto System B's producers and retiring the recipe duplicates -- not adding
+a translator between them.
+
+## Staged plan (each stage keeps the suite green and integrity PASS)
+
+1. **Config schema.** Make `config.resolve_config` accept the secure schema (or
+   convert `current.json` to it once, at the edge) so a single experiment schema
+   feeds both `train_adapter` and `run_real_evaluation`. Update the ~10 tests and
+   `tests/artifact_chain.py` that pin the recipe schema. Removing this dependency
+   is what later lets the `_publish_evaluation` filename switch disappear.
+2. **Training producer.** Route `train sft|cpt|preference` (and the three
+   `scripts/pt_train_*.py`) through the loop's single-lever producer so a manual
+   run writes a canonical, event-chained, resolver-compatible card. Delete
+   `run_training_trial` and the recipe run-card path. This closes the P0.
+   Requires a GPU end-to-end check (train → resolve → eval → score) mirroring
+   `tests/test_training_gpu.py`, because the manual real path has no coverage
+   today.
+3. **Evaluation.** Point `eval run`/`baseline` at the secure evaluator with the
+   unified schema; delete `run_real_evaluation` and the `_publish_evaluation`
+   filename switch and monkeypatch.
+4. **Scoring and frontier.** Collapse the top-level `scoring`/`frontier` defs
+   into their secure twins; keep one `create_score`, one frontier pointer.
+5. **Leaf cleanup.** Remove the now-empty top-level shims, leaving `secure_compat`
+   as the implementation and the top-level names as thin, honest imports (or move
+   `secure_compat` up and drop the package split entirely).
+
+## Verification gates
+
+Every stage: `ruff check`, `ruff format --check`, full `pytest`, and
+`scripts/check_posttrain_integrity.py` PASS on a clean tree. Stage 2 additionally
+requires a GPU run proving a manually trained candidate resolves and scores,
+since that path is currently untested — which is how the P0 survived.
