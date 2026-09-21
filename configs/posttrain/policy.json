@@ -19,8 +19,17 @@
     }
   },
   "data": {
-    "allowed_organizations": ["openeurollm"],
-    "allowed_licenses": ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "CC0-1.0", "CC-BY-4.0"],
+    "allowed_organizations": [
+      "openeurollm"
+    ],
+    "allowed_licenses": [
+      "Apache-2.0",
+      "MIT",
+      "BSD-2-Clause",
+      "BSD-3-Clause",
+      "CC0-1.0",
+      "CC-BY-4.0"
+    ],
     "license_reviews_path": "configs/posttrain/license_reviews.json",
     "remote_code_allowlist": [],
     "max_rows_per_source": 50000,
@@ -37,8 +46,8 @@
     "leakage_jaccard": 0.8
   },
   "evaluation": {
-    "suite_id": "german-core-v1",
-    "suite_path": "data/eval/german-core-v1.jsonl",
+    "suite_id": "german-core-v2",
+    "suite_path": "data/eval/german-core-v2.jsonl",
     "required_metrics": [
       "german_instruction",
       "format_following",
@@ -52,7 +61,11 @@
       "safety",
       "lm_eval"
     ],
-    "lm_eval_tasks": ["boldt_belebele_de", "boldt_global_piqa_de", "boldt_multiblimp_de"],
+    "lm_eval_tasks": [
+      "boldt_belebele_de",
+      "boldt_global_piqa_de",
+      "boldt_multiblimp_de"
+    ],
     "task_revisions": {
       "boldt_belebele_de": {
         "dataset_id": "facebook/belebele",
@@ -112,18 +125,39 @@
     }
   },
   "training": {
-    "allowed_methods": ["qlora", "lora", "sft", "cpt", "dpo", "kto", "orpo"],
-    "allowed_specialists": ["general-de", "reasoning-de", "coding-de", "safety-de", "longcontext-de", "raw-quality-de", "preference-de"],
+    "allowed_methods": [
+      "qlora",
+      "lora",
+      "sft",
+      "cpt",
+      "dpo",
+      "kto",
+      "orpo"
+    ],
+    "allowed_specialists": [
+      "general-de",
+      "reasoning-de",
+      "coding-de",
+      "safety-de",
+      "longcontext-de",
+      "raw-quality-de",
+      "preference-de"
+    ],
     "qlora": {
       "quant_type": "nf4",
       "double_quant": true,
       "compute_dtype": "bfloat16"
     },
-    "cpt_max_learning_rate": 0.00001,
+    "cpt_max_learning_rate": 1e-05,
     "assistant_only_loss_required": false
   },
   "merge": {
-    "allowed_methods": ["linear", "slerp", "ties", "dare_ties"],
+    "allowed_methods": [
+      "linear",
+      "slerp",
+      "ties",
+      "dare_ties"
+    ],
     "max_candidates": 32,
     "parameter_bounds": {
       "weight_min": 0.0,
