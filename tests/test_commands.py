@@ -50,12 +50,17 @@ def test_pretool_guard_denies_write_and_shell_bypass():
         )[0]
         is True
     )
+    approved = "uv run --locked python -m boldt_posttrain.cli status"
+    assert module.allowed({"tool_name": "Bash", "tool_input": {"command": approved}})[0] is True
+    # Redirection stays forbidden even on an otherwise approved command.
+    assert (
+        module.allowed({"tool_name": "Bash", "tool_input": {"command": approved + " > result"}})[0]
+        is False
+    )
+    # The bare interpreter form is no longer the supported entry point.
     assert (
         module.allowed(
-            {
-                "tool_name": "Bash",
-                "tool_input": {"command": "python -m boldt_posttrain.cli status > result"},
-            }
+            {"tool_name": "Bash", "tool_input": {"command": "python -m boldt_posttrain.cli status"}}
         )[0]
         is False
     )

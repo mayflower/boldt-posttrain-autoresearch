@@ -9,11 +9,16 @@ Use exact run IDs and exact Hub revisions. Never use `latest`, moving refs, shel
 general-purpose mutation commands, hidden retries, reduced batches, reduced suites, CPU fallback,
 or alternate training methods. Preserve every nonzero exit code.
 
+Every command runs through `uv run --locked`. The bare interpreter form is not an equivalent
+shorthand: it depends on a previously activated shell and leaves `.venv/bin` off `PATH`, where the
+merge and evaluation levers resolve `mergekit-yaml` and `lm-eval`. `--locked` never rewrites
+`uv.lock`; a disagreement between it and `pyproject.toml` is a stop, not a re-resolution.
+
 One outer round chooses and records exactly one candidate-producing lever (`sft`, `cpt`,
 `preference`, `distill`, or `merge`) and invokes:
 
 ```bash
-python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247 --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247 --budget-minutes 90
 ```
 
 Capture the base ref once before all rounds. Stop immediately on technical or integrity failure,

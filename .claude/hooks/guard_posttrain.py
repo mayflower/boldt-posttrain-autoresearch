@@ -29,7 +29,10 @@ def allowed(document: dict) -> tuple[bool, str]:
         if any(token in command for token in (">", "<", "|", ";", "`", "$(")):
             return False, "shell composition and redirection are forbidden"
         allowed_commands = (
-            "python -m boldt_posttrain.cli ",
+            # uv owns the environment; the bare interpreter form is not allowed
+            # because it depends on a previously activated shell and drops
+            # .venv/bin from PATH, which the merge and eval levers need.
+            "uv run --locked python -m boldt_posttrain.cli ",
             "git rev-parse HEAD",
             "git status --short",
             "git diff -- ",

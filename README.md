@@ -12,22 +12,25 @@ Linux, Python 3.10+, and `uv` are required. Real training targets NVIDIA CUDA; t
 QLoRA profile supports a single 48-GB GPU.
 
 ```bash
-conda activate boldtembed
-export VIRTUAL_ENV="$CONDA_PREFIX"
 export CUDA_DEVICE_ORDER=FASTEST_FIRST
 export CUDA_VISIBLE_DEVICES=0
-scripts/sync_conda_env.sh
-python -m boldt_posttrain.cli policy validate
-python -m boldt_posttrain.cli doctor --mode all
+scripts/sync_env.sh
+uv run --locked python -m boldt_posttrain.cli policy validate
+uv run --locked python -m boldt_posttrain.cli doctor --mode all
 ```
 
-Der Sync-Helper installiert in das vorhandene Conda-Environment, erhält fremde Pakete und
-verhindert ausdrücklich, dass UV `torch 2.6.0+cu124` ersetzt. Eine lokale `.venv` wird nicht
-verwendet. Mit der Standardreihenfolge `FASTEST_FIRST` bezeichnet Gerät `0` auf diesem Host die
-48-GB-GPU NVIDIA RTX A6000.
+`uv` owns the environment. `uv.lock` is the single source of truth, `--locked` refuses to
+re-resolve it silently, and every documented command runs through `uv run --locked` so no
+invocation depends on a previously activated shell. There is no Conda environment and no
+hand-managed `.venv` to activate. `pip install -e '.[train,data,eval,merge]'` still works but does
+not replace the lock.
 
-`uv.lock` is the reproducible dependency reference. `pip install -e '.[train,data,eval,merge]'`
-remains supported, but does not replace the lock.
+`uv run` also puts `.venv/bin` on `PATH`, which the code relies on: the merge lever resolves
+`mergekit-yaml` and the evaluation lever resolves `lm-eval` via `shutil.which`. Calling
+`.venv/bin/python` directly skips that and makes `doctor --real` fail with an unavailable Mergekit.
+
+With the default order `FASTEST_FIRST`, device `0` on the reference host is the 48-GB
+NVIDIA RTX A6000.
 
 ## Modes
 
@@ -41,30 +44,30 @@ CPU, another model, another trainer, or a smaller benchmark.
 ## Workflow
 
 ```bash
-python -m boldt_posttrain.cli data discover --real --config configs/posttrain/current.json
-python -m boldt_posttrain.cli data prepare --real --config configs/posttrain/current.json
-python -m boldt_posttrain.cli baseline run --real --allow-gpu --config configs/posttrain/current.json
-python -m boldt_posttrain.cli train sft --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
-python -m boldt_posttrain.cli eval run --real --allow-gpu --candidate train-sft-20260721T120000.000000Z-0123456789abcdef
-python -m boldt_posttrain.cli score --candidate eval-20260721T130000.000000Z-0123456789abcdef
-python -m boldt_posttrain.cli promote --candidate train-sft-20260721T120000.000000Z-0123456789abcdef --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247
+uv run --locked python -m boldt_posttrain.cli data discover --real --config configs/posttrain/current.json
+uv run --locked python -m boldt_posttrain.cli data prepare --real --config configs/posttrain/current.json
+uv run --locked python -m boldt_posttrain.cli baseline run --real --allow-gpu --config configs/posttrain/current.json
+uv run --locked python -m boldt_posttrain.cli train sft --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli eval run --real --allow-gpu --candidate train-sft-20260721T120000.000000Z-0123456789abcdef
+uv run --locked python -m boldt_posttrain.cli score --candidate eval-20260721T130000.000000Z-0123456789abcdef
+uv run --locked python -m boldt_posttrain.cli promote --candidate train-sft-20260721T120000.000000Z-0123456789abcdef --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247
 ```
 
 Other real levers:
 
 ```bash
-python -m boldt_posttrain.cli train cpt --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
-python -m boldt_posttrain.cli train preference --method dpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
-python -m boldt_posttrain.cli train preference --method kto --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
-python -m boldt_posttrain.cli train preference --method orpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
-python -m boldt_posttrain.cli distill --teacher mayflowergmbh/boldt-dc-1b-german-it-16k-dpo@a24720616fc0ae0d0e8d2009d1c4eddec56fd15c --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
-python -m boldt_posttrain.cli merge search --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train cpt --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train preference --method dpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train preference --method kto --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train preference --method orpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli distill --teacher mayflowergmbh/boldt-dc-1b-german-it-16k-dpo@a24720616fc0ae0d0e8d2009d1c4eddec56fd15c --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli merge search --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
 ```
 
 One deterministic experiment round:
 
 ```bash
-python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247 --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247 --budget-minutes 90
 ```
 
 ## Trust Model

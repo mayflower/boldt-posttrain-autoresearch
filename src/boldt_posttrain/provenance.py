@@ -88,7 +88,9 @@ def collect_env_metadata() -> Dict[str, Any]:
         "commit": current_git_commit(),
         "python": sys.version.split()[0],
         "platform": platform.platform(),
-        "conda_env": os.environ.get("CONDA_DEFAULT_ENV"),
+        # uv run exports VIRTUAL_ENV; record it so a run card still states which
+        # environment produced it.
+        "virtual_env": os.environ.get("VIRTUAL_ENV"),
         "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
     }
     for pkg in _TRACKED_PKGS:

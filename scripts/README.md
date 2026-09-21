@@ -6,6 +6,7 @@ concrete trainer/eval/merge is implemented (never fabricating metrics).
 
 Shared logic lives in `src/boldt_posttrain/` (config resolution, provenance/run cards, the
 protected scorer, the training-lever skeleton, the frontier view). Drive the loop through the
-`/pt-*` Claude commands (each calls `python scripts/pt_*.py` directly — there is no Makefile).
-Validate with `python -m py_compile scripts/pt_*.py scripts/check_posttrain_integrity.py` and
-`python -m unittest discover -s tests`.
+`/pt-*` Claude commands (each calls `uv run --locked python scripts/pt_*.py` directly — there
+is no Makefile).
+Validate with `uv run --locked python -m py_compile scripts/pt_*.py
+scripts/check_posttrain_integrity.py` and `uv run --locked python -m unittest discover -s tests`.

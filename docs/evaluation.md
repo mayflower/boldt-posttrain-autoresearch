@@ -5,8 +5,8 @@
 Validate without loading a model:
 
 ```bash
-python -m boldt_posttrain.cli eval validate-suite
-python -m boldt_posttrain.cli eval catalog
+uv run --locked python -m boldt_posttrain.cli eval validate-suite
+uv run --locked python -m boldt_posttrain.cli eval catalog
 ```
 
 Real baseline and candidate evaluation require explicit GPU permission. Baselines are immutable and `baseline/current.json` is replaced only with `--replace-baseline`.

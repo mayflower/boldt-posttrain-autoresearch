@@ -3,14 +3,12 @@
 ## Preflight
 
 ```bash
-conda activate boldtembed
-export VIRTUAL_ENV="$CONDA_PREFIX"
 export CUDA_DEVICE_ORDER=FASTEST_FIRST
 export CUDA_VISIBLE_DEVICES=0
-scripts/sync_conda_env.sh
-python -m boldt_posttrain.cli doctor --mode all --real --allow-gpu
-python -m boldt_posttrain.cli policy validate
-python -m boldt_posttrain.cli eval validate-suite
+scripts/sync_env.sh
+uv run --locked python -m boldt_posttrain.cli doctor --mode all --real --allow-gpu
+uv run --locked python -m boldt_posttrain.cli policy validate
+uv run --locked python -m boldt_posttrain.cli eval validate-suite
 ```
 
 The real doctor must report CUDA, GPU name/VRAM/compute capability, BF16, pinned package versions,
@@ -19,8 +17,8 @@ seed accessibility/fingerprints, disk space, lm-eval task validity, and Mergekit
 ## Dry Plans
 
 ```bash
-python -m boldt_posttrain.cli train sft --dry-run --config configs/posttrain/current.json
-python -m boldt_posttrain.cli eval run --dry-run --candidate train-sft-20260721T120000.000000Z-0123456789abcdef
+uv run --locked python -m boldt_posttrain.cli train sft --dry-run --config configs/posttrain/current.json
+uv run --locked python -m boldt_posttrain.cli eval run --dry-run --candidate train-sft-20260721T120000.000000Z-0123456789abcdef
 ```
 
 Compare hashes of all real namespaces before and after if investigating isolation. Plans have no
