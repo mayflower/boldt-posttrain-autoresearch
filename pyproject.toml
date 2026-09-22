@@ -44,9 +44,13 @@ eval = [
   "datasets==4.8.5",
 ]
 # Language-id for the German-candidate data filter (deterministic fastText/langid check).
+# hf-transfer is the accelerated Rust download backend; enabled via
+# HF_HUB_ENABLE_HF_TRANSFER=1 it is the current HuggingFace-recommended path and the
+# only one that completes reliably on hosts where the pure-Python downloader stalls.
 data = [
   "fasttext-langdetect==1.1.1",
   "huggingface-hub==0.36.0",
+  "hf-transfer==0.1.9",
   "datasets==4.8.5",
 ]
 dev = [

@@ -14,6 +14,12 @@ uv run --locked python -m boldt_posttrain.cli eval validate-suite
 The real doctor must report CUDA, GPU name/VRAM/compute capability, BF16, pinned package versions,
 seed accessibility/fingerprints, disk space, lm-eval task validity, and Mergekit availability.
 
+## Downloads
+
+`hf-transfer` is a locked dependency and `boldt_posttrain` enables it (`HF_HUB_ENABLE_HF_TRANSFER=1`) whenever it is importable, so model and dataset
+pulls use HuggingFace's accelerated backend by default. Override by exporting the
+variable yourself before running.
+
 ## Dry Plans
 
 ```bash
