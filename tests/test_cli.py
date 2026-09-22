@@ -114,24 +114,18 @@ def test_rlvr_defaults_to_recipe_policy():
     assert Path(args.policy).name == "recipe-policy.json"
 
 
-def test_recipe_dry_run_executes_in_isolated_output(tmp_path: Path, capsys):
-    assert (
-        main(
-            [
-                "train",
-                "sft",
-                "--dry-run",
-                "--config",
-                "configs/posttrain/current.json",
-                "--out",
-                str(tmp_path / "runs"),
-            ]
-        )
-        == 0
-    )
+def test_train_dry_run_is_a_preflight_that_writes_no_artifact(tmp_path: Path, capsys):
+    # The manual train verbs now run the loop's secure producer; dry-run is a
+    # preflight, not the old recipe path that wrote a run_card. Without a prepared
+    # data manifest it fails closed and produces no artifact.
+    code = main(["train", "sft", "--dry-run", "--config", "configs/posttrain/secure-current.json"])
     result = json.loads(capsys.readouterr().out)
     assert result["mode"] == "dry_run"
-    assert (Path(result["out"]) / "run_card.json").is_file()
+    if code == 0:
+        assert "message" in result  # preflight ok: nothing written
+    else:
+        assert code == 2 and "error" in result
+    assert not (tmp_path / "runs").exists()
 
 
 def test_eval_candidate_forwards_verified_checkpoint_and_revision(

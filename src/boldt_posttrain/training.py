@@ -11,13 +11,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from . import provenance as prov
-from . import recipe
 
 ROOT = Path(__file__).resolve().parents[2]
-
-# Which optional preference loss / training knobs to surface in the dry-run plan, per kind.
-_RUN_TYPE = {"specialist": "train_specialist", "preference": "train_preference", "cpt": "train_cpt"}
 
 
 def load_tokenizer(model_ref: str, *, revision: Optional[str] = None) -> Any:
@@ -57,26 +52,6 @@ def resolve_mix_plan(value: Optional[Path]) -> Optional[Path]:
     if document.get("run_id") != str(value):
         raise ValueError("mix plan run ID does not match its artifact")
     return candidate
-
-
-def _training_plan(cfg: Dict[str, Any], kind: str, specialist: str) -> Dict[str, Any]:
-    tr = cfg.get("training", {}) if isinstance(cfg.get("training"), dict) else {}
-    plan = {
-        "kind": kind,
-        "specialist": specialist,
-        "base_model": tr.get("base_model"),
-        "method": tr.get("method"),
-        "learning_rate": tr.get("learning_rate"),
-        "num_train_epochs": tr.get("num_train_epochs"),
-        "max_steps": tr.get("max_steps"),
-        "context_length": tr.get("context_length"),
-        "lora_r": tr.get("lora_r"),
-        "lora_alpha": tr.get("lora_alpha"),
-        "target_modules": tr.get("target_modules"),
-    }
-    if kind == "preference":
-        plan["preference"] = cfg.get("preference", {})
-    return plan
 
 
 def _manifest_clean(
@@ -891,143 +866,6 @@ def _train_real(
         metrics["mix_tokens_by_group"] = dict(sorted(mix_counts.items()))
         metrics["mix_repeat_counts"] = {group: 0 for group in sorted(mix_counts)}
     return metrics
-
-
-def run_training_trial(
-    *,
-    cfg: Dict[str, Any],
-    kind: str,
-    specialist: str,
-    out_root: Path,
-    budget_minutes: int,
-    argv: List[str],
-    dry_run: bool,
-    allow_gpu: bool,
-    allow_checkpoints: bool,
-    data_dir: Path,
-    config_errors: List[str],
-    device: str = "cuda:0",
-    mix_plan: Optional[Path] = None,
-) -> int:
-    run_id = f"{specialist}-{kind}-{'dry' if dry_run else 'real'}-{prov.stamp()}"
-    out_dir = Path(out_root) / run_id
-    git = recipe.persist_inputs(out_dir, cfg, argv)
-    command = "python " + " ".join(argv)
-    plan = _training_plan(cfg, kind, specialist)
-
-    def finish(metrics: Dict[str, Any], status: str, extra: Dict[str, Any]) -> int:
-        metrics_doc = {
-            "run_id": run_id,
-            "status": status,
-            "mode": "dry_run" if dry_run else "real",
-            "budget_minutes": budget_minutes,
-            "git": git,
-            "training_plan": plan,
-            "metrics": metrics,
-            **extra,
-        }
-        recipe.write_json(out_dir / "metrics.json", metrics_doc)
-        output_artifacts = [str(out_dir / "metrics.json")]
-        if (out_dir / "adapter").is_dir():
-            output_artifacts.append(str(out_dir / "adapter"))
-        card = prov.new_run_card(
-            run_id,
-            _RUN_TYPE[kind],
-            command,
-            model=plan.get("base_model"),
-            metrics=metrics,
-            data_manifest=str(data_dir / "manifest.json"),
-            input_artifacts=[str(p) for p in (data_dir / "manifest.json",)],
-            output_artifacts=output_artifacts,
-            notes=extra.get("message", f"{kind} {specialist} ({metrics_doc['mode']})"),
-        )
-        prov.write_run_card(card, out_dir)
-        print(
-            json.dumps(
-                {
-                    "status": status,
-                    "mode": metrics_doc["mode"],
-                    "run_id": run_id,
-                    "out": str(out_dir),
-                    **{k: extra[k] for k in ("message",) if k in extra},
-                },
-                ensure_ascii=False,
-            )
-        )
-        return 0 if status in ("ok", "pass") else 4
-
-    if config_errors:
-        return finish(
-            recipe.metrics_skeleton(cfg),
-            "fail",
-            {"message": "config invalid: " + "; ".join(config_errors)},
-        )
-
-    if dry_run:
-        return finish(
-            recipe.metrics_skeleton(cfg),
-            "ok",
-            {
-                "scale_disclaimer": "dry-run plumbing only — no checkpoint, no metrics",
-                "message": f"planned {kind} '{specialist}'; pass --real --allow-gpu to train",
-            },
-        )
-
-    # --- real path -------------------------------------------------------------------------
-    if not allow_gpu:
-        return finish(
-            recipe.metrics_skeleton(cfg),
-            "fail",
-            {"message": "--real requires --allow-gpu (human hardware gate)"},
-        )
-    stack_err = recipe.require_real_stack()
-    if stack_err:
-        return finish(recipe.metrics_skeleton(cfg), "fail", {"message": stack_err})
-    if not allow_checkpoints:
-        return finish(
-            recipe.metrics_skeleton(cfg),
-            "fail",
-            {"message": "real training requires --allow-checkpoints"},
-        )
-    if kind == "preference" and not cfg.get("preference", {}).get("enabled", False):
-        return finish(
-            recipe.metrics_skeleton(cfg),
-            "fail",
-            {"message": "preference lever is disabled by preference.enabled=false"},
-        )
-    clean = _manifest_clean(
-        data_dir,
-        expected_decontamination_hash=cfg.get("data", {}).get("decontamination_hash"),
-        expected_policy_hash=cfg.get("policy_hash"),
-    )
-    if not clean["clean"]:
-        return finish(
-            recipe.metrics_skeleton(cfg),
-            "fail",
-            {"message": "data not trainable: " + clean["reason"]},
-        )
-    try:
-        minimum_vram = float(cfg.get("hardware", {}).get("minimum_vram_gb", 40))
-        validate_device(device, minimum_vram_gb=minimum_vram)
-        metrics = _train_real(
-            cfg=cfg,
-            kind=kind,
-            data_dir=data_dir,
-            out_dir=out_dir,
-            deadline=recipe.deadline_after(budget_minutes),
-            device=device,
-            mix_plan_path=resolve_mix_plan(mix_plan),
-        )
-    except (RuntimeError, ValueError, OSError) as exc:
-        return finish(
-            recipe.metrics_skeleton(cfg),
-            "fail",
-            {"message": f"technical training failure: {type(exc).__name__}: {exc}"},
-        )
-    adapter = out_dir / "adapter"
-    if not adapter.is_dir() or not any(adapter.iterdir()):
-        return finish(metrics, "fail", {"message": "trainer produced no adapter checkpoint"})
-    return finish(metrics, "ok", {"message": f"trained {kind} adapter on {device}"})
 
 
 from .secure_compat.training import (  # noqa: E402, F401

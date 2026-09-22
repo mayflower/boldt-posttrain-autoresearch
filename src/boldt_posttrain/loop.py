@@ -9,7 +9,11 @@ from typing import Any, Mapping
 
 from . import config as config_module
 from .artifacts import RUN_ID_RE, EventLog, atomic_write_json, new_run_id, sha256_file
-from .data_pipeline import load_manifest_rows, verify_data_manifest
+from .data_pipeline import load_manifest_rows
+
+# The data-root+policy verifier, not the top-level manifest-path one they shadow
+# each other under. The loop and manual training both hand it (data_root, policy).
+from .secure_compat.data_pipeline import verify_data_manifest
 from .distillation import _teacher_license, distill_and_train, extract_prompts
 from .evaluation import _publish_evaluation
 from .frontier import (
@@ -145,6 +149,78 @@ def _execute_lever(
     raise LoopError(
         "loop experiment lever must produce one candidate: sft, cpt, preference, distill, or merge"
     )
+
+
+_MANUAL_LEVERS = {"sft", "cpt", "preference"}
+
+
+def train_one_lever(
+    *,
+    lever: str,
+    config_path: Path,
+    budget_minutes: float,
+    allow_gpu: bool,
+    allow_checkpoints: bool,
+    specialist: str | None = None,
+    outputs_root: Path = OUTPUTS,
+    repository_root: Path = ROOT,
+) -> tuple[dict[str, Any], int]:
+    """Run a single training lever manually and return its resolvable candidate.
+
+    This is the same producer the loop uses (`_execute_lever` -> `train_adapter`),
+    so a manually trained candidate carries a canonical run id, a structured model
+    card, and an event-chain record -- exactly what `resolver.resolve_candidate`
+    requires. It replaces `training.run_training_trial`, whose recipe-format cards
+    the resolver could never consume, which was the root of the "train -> evaluate
+    the returned id" gap.
+
+    It trains only; evaluation, scoring, and promotion remain their own commands
+    operating on the returned run id.
+    """
+    if lever not in _MANUAL_LEVERS:
+        return {
+            "status": "failed",
+            "error": f"manual training lever must be one of {sorted(_MANUAL_LEVERS)}",
+        }, 2
+    if not (allow_gpu and allow_checkpoints):
+        return {
+            "status": "failed",
+            "error": "manual training requires --real --allow-gpu --allow-checkpoints",
+        }, 2
+    try:
+        policy = load_policy()
+        config = config_module.load_experiment(config_path)
+        # The command names the lever; the config's own lever is advisory here.
+        config.document["experiment"]["lever"] = lever
+        if specialist:
+            config.document["training"]["specialist"] = specialist
+        manifest = verify_data_manifest(
+            outputs_root / "data", policy, repository_root=repository_root
+        )
+        previous_runs = {
+            path.parent.name for path in (outputs_root / "runs").glob("*/run_card.json")
+        }
+        deadline = time.monotonic() + budget_minutes * 60
+        result = _execute_lever(
+            config,
+            policy,
+            manifest,
+            deadline=deadline,
+            outputs_root=outputs_root,
+            repository_root=repository_root,
+            allow_checkpoints=allow_checkpoints,
+            allow_gpu=allow_gpu,
+        )
+    except Exception as exc:  # noqa: BLE001 -- surface any failure as a nonzero exit
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}, 4
+    run_id = result.get("run_id")
+    if not isinstance(run_id, str) or run_id in previous_runs:
+        return {"status": "failed", "error": "lever did not produce one fresh candidate"}, 4
+    if result.get("status") != "succeeded":
+        return {"status": result.get("status", "failed"), "run_id": run_id}, 4
+    # Prove the contract the recipe path violated: the fresh candidate resolves.
+    resolve_model(policy=policy, candidate=run_id, outputs_root=outputs_root)
+    return {"status": "succeeded", "run_id": run_id, "candidate": run_id}, 0
 
 
 def run_experiment(

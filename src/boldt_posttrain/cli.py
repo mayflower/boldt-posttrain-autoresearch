@@ -29,6 +29,7 @@ from .data_pipeline import (
     verify_hashed_artifact,
     verify_trainable_manifest,
 )
+from .secure_compat.data_pipeline import verify_data_manifest
 from .evaluation import (
     finalize_summary,
     load_suite,
@@ -233,20 +234,45 @@ def _data_discover_command(args: argparse.Namespace) -> int:
 
 
 def _train_command(args: argparse.Namespace) -> int:
-    stem = {
-        "sft": "pt_train_specialist",
-        "cpt": "pt_train_cpt",
-        "preference": "pt_train_preference",
-    }[args.action]
-    fields = ("config", "specialist", "out", "data", "budget_minutes", "device", "mix_plan")
-    if args.action == "preference":
-        fields = (*fields, "method")
-    return _forward(
-        args,
-        stem,
-        fields,
-        ("real", "dry_run", "allow_gpu", "allow_checkpoints"),
+    # One producer: the manual levers run the same secure path the loop uses, so a
+    # manually trained candidate is resolver-compatible (canonical id, structured
+    # card, event chain). The former recipe path (run_training_trial) is gone.
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = ROOT / config_path
+    if args.dry_run:
+        try:
+            policy = load_policy()
+            config = cfgmod.load_experiment(config_path)
+            config.document["experiment"]["lever"] = args.action
+            verify_data_manifest(OUTPUTS / "data", policy, repository_root=ROOT)
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"status": "failed", "mode": "dry_run", "error": str(exc)}))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "mode": "dry_run",
+                    "lever": args.action,
+                    "config": str(config_path),
+                    "message": "preflight ok; pass --real --allow-gpu --allow-checkpoints to train",
+                }
+            )
+        )
+        return 0
+    from .loop import train_one_lever
+
+    result, code = train_one_lever(
+        lever=args.action,
+        config_path=config_path,
+        budget_minutes=args.budget_minutes,
+        allow_gpu=args.allow_gpu,
+        allow_checkpoints=args.allow_checkpoints,
+        specialist=getattr(args, "specialist", None),
     )
+    print(json.dumps(result, ensure_ascii=False))
+    return code
 
 
 def _merge_command(args: argparse.Namespace) -> int:
@@ -1420,8 +1446,10 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("sft", "cpt", "preference"):
         secure_train = train_sub.add_parser(name)
         _explicit_mode(secure_train, gpu=True)
-        secure_train.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-        secure_train.add_argument("--budget-minutes", type=float)
+        secure_train.add_argument(
+            "--config", default=str(ROOT / "configs/posttrain/secure-current.json")
+        )
+        secure_train.add_argument("--budget-minutes", type=float, default=90.0)
         secure_train.add_argument("--specialist")
         secure_train.add_argument("--out", default=str(ROOT / "outputs/posttrain/runs"))
         secure_train.add_argument("--data", default=str(ROOT / "outputs/posttrain/data"))

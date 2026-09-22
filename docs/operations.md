@@ -17,7 +17,7 @@ seed accessibility/fingerprints, disk space, lm-eval task validity, and Mergekit
 ## Dry Plans
 
 ```bash
-uv run --locked python -m boldt_posttrain.cli train sft --dry-run --config configs/posttrain/current.json
+uv run --locked python -m boldt_posttrain.cli train sft --dry-run --config configs/posttrain/secure-current.json
 uv run --locked python -m boldt_posttrain.cli eval run --dry-run --candidate train-sft-20260721T120000.000000Z-0123456789abcdef
 ```
 

@@ -1,13 +1,18 @@
-"""The CLI reaches its target scripts through a second argparse pass.
+"""The manual `train` verbs run the loop's single producer in-process.
 
-tests/test_cli.py replaces cli._script with a stub, and tests/test_docs_commands.py
-stops at build_parser(). Neither crosses the boundary where the forwarded argv is
-parsed again, which is where a type mismatch turns a documented command into exit 2.
+They used to forward parsed args back into a second argparse pass in
+scripts/pt_train_*.py, which is where the float/int `--budget-minutes` mismatch
+lived and where the recipe run-card (unresolvable by the resolver) was written.
+Both are gone: `train` now calls `loop.train_one_lever`, the same producer the
+loop uses, so a manual candidate is resolver-compatible. These tests pin the
+wiring without needing a GPU.
 """
+
+import json
 
 import pytest
 
-from boldt_posttrain import cli, training
+from boldt_posttrain import cli, loop
 
 
 TRAIN_ACTIONS = [
@@ -18,47 +23,66 @@ TRAIN_ACTIONS = [
 
 
 @pytest.mark.parametrize(("action", "extra"), TRAIN_ACTIONS)
-def test_documented_budget_survives_forwarding_to_the_trainer(monkeypatch, action, extra):
+def test_real_train_calls_the_single_producer_with_the_named_lever(monkeypatch, action, extra):
     seen: dict = {}
 
-    def record(**kwargs):
+    def fake(**kwargs):
         seen.update(kwargs)
-        return 0
+        return {"status": "succeeded", "run_id": "x"}, 0
 
-    monkeypatch.setattr(training, "run_training_trial", record)
-    exit_code = cli.main(
+    monkeypatch.setattr(loop, "train_one_lever", fake)
+    code = cli.main(
         [
             "train",
             action,
-            "--dry-run",
-            "--config",
-            "configs/posttrain/current.json",
+            "--real",
+            "--allow-gpu",
+            "--allow-checkpoints",
             "--budget-minutes",
             "90",
             *extra,
         ]
     )
-    assert exit_code == 0
-    assert float(seen["budget_minutes"]) == 90.0
+    assert code == 0
+    assert seen["lever"] == action
+    # Float, not int: the old int forwarding rejected the documented "90".
+    assert isinstance(seen["budget_minutes"], float) and seen["budget_minutes"] == 90.0
 
 
-@pytest.mark.parametrize(("action", "extra"), TRAIN_ACTIONS)
-def test_fractional_budget_is_forwarded_without_truncation(monkeypatch, action, extra):
+def test_fractional_budget_reaches_the_producer(monkeypatch):
     seen: dict = {}
-    monkeypatch.setattr(training, "run_training_trial", lambda **kw: seen.update(kw) or 0)
+    monkeypatch.setattr(
+        loop, "train_one_lever", lambda **kw: (seen.update(kw) or {"status": "s", "run_id": "x"}, 0)
+    )
     assert (
         cli.main(
             [
                 "train",
-                action,
-                "--dry-run",
-                "--config",
-                "configs/posttrain/current.json",
+                "sft",
+                "--real",
+                "--allow-gpu",
+                "--allow-checkpoints",
                 "--budget-minutes",
                 "7.5",
-                *extra,
             ]
         )
         == 0
     )
-    assert float(seen["budget_minutes"]) == 7.5
+    assert seen["budget_minutes"] == 7.5
+
+
+def test_dry_run_is_a_preflight_and_never_trains(monkeypatch, capsys):
+    called = {"trained": False}
+
+    def fake(**kwargs):
+        called["trained"] = True
+        return {"status": "succeeded"}, 0
+
+    monkeypatch.setattr(loop, "train_one_lever", fake)
+    # No prepared manifest in the test tree -> preflight fails closed with exit 2,
+    # and crucially the producer is never invoked.
+    code = cli.main(["train", "sft", "--dry-run"])
+    assert code == 2
+    assert called["trained"] is False
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["mode"] == "dry_run"

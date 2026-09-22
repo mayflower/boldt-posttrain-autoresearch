@@ -47,7 +47,7 @@ CPU, another model, another trainer, or a smaller benchmark.
 uv run --locked python -m boldt_posttrain.cli data discover --real --config configs/posttrain/current.json
 uv run --locked python -m boldt_posttrain.cli data prepare --real --config configs/posttrain/current.json
 uv run --locked python -m boldt_posttrain.cli baseline run --real --allow-gpu --config configs/posttrain/current.json
-uv run --locked python -m boldt_posttrain.cli train sft --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train sft --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
 uv run --locked python -m boldt_posttrain.cli eval run --real --allow-gpu --candidate train-sft-20260721T120000.000000Z-0123456789abcdef
 uv run --locked python -m boldt_posttrain.cli score --candidate eval-20260721T130000.000000Z-0123456789abcdef
 uv run --locked python -m boldt_posttrain.cli promote --candidate train-sft-20260721T120000.000000Z-0123456789abcdef --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247
@@ -56,10 +56,10 @@ uv run --locked python -m boldt_posttrain.cli promote --candidate train-sft-2026
 Other real levers:
 
 ```bash
-uv run --locked python -m boldt_posttrain.cli train cpt --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
-uv run --locked python -m boldt_posttrain.cli train preference --method dpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
-uv run --locked python -m boldt_posttrain.cli train preference --method kto --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
-uv run --locked python -m boldt_posttrain.cli train preference --method orpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train cpt --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train preference --method dpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train preference --method kto --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train preference --method orpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
 uv run --locked python -m boldt_posttrain.cli distill --teacher mayflowergmbh/boldt-dc-1b-german-it-16k-dpo@a24720616fc0ae0d0e8d2009d1c4eddec56fd15c --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
 uv run --locked python -m boldt_posttrain.cli merge search --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
 ```
