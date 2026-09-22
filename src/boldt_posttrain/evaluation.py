@@ -748,10 +748,14 @@ _modern_run_lm_eval = run_lm_eval
 
 
 def _publish_evaluation(*args: Any, **kwargs: Any) -> Dict[str, Any]:
-    """Run the retained secure publisher while honoring top-level worker injections."""
-    config_path = Path(kwargs.get("config_path", ""))
-    if config_path.resolve() == (ROOT / "configs/posttrain/current.json").resolve():
-        kwargs["config_path"] = ROOT / "configs/posttrain/secure-current.json"
+    """Run the retained secure publisher while honoring top-level worker injections.
+
+    The caller states which experiment config to evaluate against; this wrapper no
+    longer rewrites current.json to secure-current.json by filename. That silent
+    swap made "which config actually ran?" unanswerable. The only remaining seam
+    is forwarding a test-overridden ``run_lm_eval`` into the secure module so the
+    lm-eval subprocess can be stubbed offline.
+    """
     original_generate = _secure_evaluation.generate_cases
     original_lm_eval = _secure_evaluation.run_lm_eval
     _secure_evaluation.generate_cases = generate_cases

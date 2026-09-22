@@ -52,7 +52,7 @@ def test_baseline_pointer_and_artifact_refs_are_immutable(tmp_path: Path, monkey
     result = _publish_evaluation(
         resolved=resolved,
         policy=policy,
-        config_path=evaluation.ROOT / "configs/posttrain/current.json",
+        config_path=evaluation.ROOT / "configs/posttrain/secure-current.json",
         output_root=baseline_root,
         baseline=True,
         replace_baseline=False,
@@ -69,7 +69,7 @@ def test_baseline_pointer_and_artifact_refs_are_immutable(tmp_path: Path, monkey
         _publish_evaluation(
             resolved=resolved,
             policy=policy,
-            config_path=evaluation.ROOT / "configs/posttrain/current.json",
+            config_path=evaluation.ROOT / "configs/posttrain/secure-current.json",
             output_root=baseline_root,
             baseline=True,
             replace_baseline=False,

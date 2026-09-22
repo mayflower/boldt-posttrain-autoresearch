@@ -84,3 +84,33 @@ Every stage: `ruff check`, `ruff format --check`, full `pytest`, and
 `scripts/check_posttrain_integrity.py` PASS on a clean tree. Stage 2 additionally
 requires a GPU run proving a manually trained candidate resolves and scores,
 since that path is currently untested — which is how the P0 survived.
+
+## Empirical findings during execution (2026-09-22)
+
+Working the plan surfaced a stronger coupling than the idealized 1→5 order assumed:
+
+- **The recipe config schema falls last, not first.** `current.json`'s recipe
+  fields exist only because the manual CLI verbs (`train`, `eval run`, `baseline`,
+  `score`) still read them. The schema cannot be removed until those verbs are
+  rerouted onto the secure producers. So the true order is reroute-then-drop, and
+  "Stage 1: config" is really the closing cleanup.
+- **Only the training reroute is GPU-gated.** Evaluation and scoring run on CPU
+  (the suite proves it via `tests/artifact_chain.py`). Rerouting `eval`/`score`
+  is CPU-verifiable; rerouting `train` (Stage 2) needs a GPU end-to-end run
+  because the manual real training path has no coverage today.
+- **Two live scorers.** Manual `score` uses top-level `scoring.score_run`
+  (compares two saved summaries); the loop uses secure `create_score`
+  (event-chained). Collapsing them is coupled to the eval reroute.
+
+### Done
+
+- **Config filename switch removed.** `evaluation._publish_evaluation` no longer
+  rewrites `current.json` to `secure-current.json` by filename; callers state the
+  config explicitly (`tests/artifact_chain.py`, `tests/test_baseline.py` updated).
+  The only remaining seam is forwarding a test-overridden `run_lm_eval` for
+  offline stubbing. Full suite green.
+
+### Handed back (GPU-gated or high-risk to land blind)
+
+- Training producer reroute (Stage 2) and the config-schema removal it unblocks.
+  These change what runs and must be verified on the target GPU, not asserted.
