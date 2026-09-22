@@ -278,6 +278,7 @@ source = { editable = "." }
 [package.optional-dependencies]
 data = [
     { name = "datasets" },
+    { name = "datasketch" },
     { name = "fasttext-langdetect" },
     { name = "hf-transfer" },
     { name = "huggingface-hub" },
@@ -317,6 +318,7 @@ requires-dist = [
     { name = "datasets", marker = "extra == 'data'", specifier = "==4.8.5" },
     { name = "datasets", marker = "extra == 'eval'", specifier = "==4.8.5" },
     { name = "datasets", marker = "extra == 'train'", specifier = "==4.8.5" },
+    { name = "datasketch", marker = "extra == 'data'", specifier = "==1.6.5" },
     { name = "fasttext-langdetect", marker = "extra == 'data'", specifier = "==1.1.1" },
     { name = "hf-transfer", marker = "extra == 'data'", specifier = "==0.1.9" },
     { name = "huggingface-hub", marker = "extra == 'data'", specifier = "==0.36.0" },
@@ -578,6 +580,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/66/34/14cd8e76f907f7d4dca2334cfeec9f81d30fd15c25a015f99aaea694eaed/datasets-4.8.5.tar.gz", hash = "sha256:0f0c1c3d56ffff2c93b2f4c63c95bac94f3d7e8621aea2a2a576275233bba772", size = 605649, upload-time = "2026-04-27T15:43:57.384Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/65/99/00f3196036501b53032c4b1ab8337a0b978dee832ed276dae3815df4e8b5/datasets-4.8.5-py3-none-any.whl", hash = "sha256:5079900781719c0e063a8efdd2cd95a31ad0c63209178669cd23cf1b926149ff", size = 528973, upload-time = "2026-04-27T15:43:53.702Z" },
+]
+
+[[package]]
+name = "datasketch"
+version = "1.6.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/2f/248057ca4d22bd3ffb9bb3e9f4c208240a27e4d0ca9687d6d1d896aeec2a/datasketch-1.6.5.tar.gz", hash = "sha256:ba2848cb74f23d6d3dd444cf24edcbc47b1c34a171b1803231793ed4d74d4fcf", size = 92598, upload-time = "2024-06-04T00:44:21.23Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8d/24/c8b0570c17c64e9d00485ac6f325c3a7ba19ea8b3385c73c85a26a519d77/datasketch-1.6.5-py3-none-any.whl", hash = "sha256:59311b2925b2f37536e9f7c2f46bbc25e8e54379c8635a3fa7ca55d2abb66d1b", size = 89246, upload-time = "2024-06-04T00:44:18.678Z" },
 ]
 
 [[package]]

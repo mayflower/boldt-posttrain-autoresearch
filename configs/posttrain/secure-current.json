@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "experiment": {
-    "name": "dolci-de-qlora-sft-v1",
-    "hypothesis": "German Dolci instruction tuning improves instruction following without regressing safety, language retention, or long-context behavior.",
+    "name": "eu-instruct-de-qlora-sft-v1",
+    "hypothesis": "German EU-Instruct-Synthetic SFT improves instruction following without regressing safety, language retention, or long-context behavior.",
     "lever": "sft"
   },
   "data": {
     "sources": [
       {
-        "dataset_id": "openeurollm/Dolci-Instruct-SFT-translated",
-        "revision": "63202c34b23a4f155658a9e157e988902fb62279",
+        "dataset_id": "openeurollm/EU-Instruct-Synthetic",
+        "revision": "c13be5d71144feb1007708aae2a8c2d823f8e59a",
         "config": "de",
         "split": "train",
         "schema": "sft"
@@ -20,13 +20,13 @@
   "training": {
     "specialist": "general-de",
     "method": "qlora",
-    "learning_rate": 0.00001,
+    "learning_rate": 1e-05,
     "num_train_epochs": 1.0,
-    "max_steps": 1000,
+    "max_steps": 20,
     "warmup_ratio": 0.03,
     "per_device_batch_size": 1,
     "gradient_accumulation_steps": 16,
-    "context_length": 16384,
+    "context_length": 2048,
     "lora_r": 32,
     "lora_alpha": 64,
     "lora_dropout": 0.05,
@@ -65,7 +65,12 @@
   "merge": {
     "enabled": true,
     "inputs": [],
-    "methods": ["linear", "slerp", "ties", "dare_ties"],
+    "methods": [
+      "linear",
+      "slerp",
+      "ties",
+      "dare_ties"
+    ],
     "parameters": {},
     "dtype": "bfloat16"
   },

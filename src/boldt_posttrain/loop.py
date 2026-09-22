@@ -9,11 +9,14 @@ from typing import Any, Mapping
 
 from . import config as config_module
 from .artifacts import RUN_ID_RE, EventLog, atomic_write_json, new_run_id, sha256_file
-from .data_pipeline import load_manifest_rows
 
-# The data-root+policy verifier, not the top-level manifest-path one they shadow
-# each other under. The loop and manual training both hand it (data_root, policy).
+# The secure readers, not the top-level recipe ones they shadow each other under:
+# - verify_data_manifest takes (data_root, policy), not a manifest path;
+# - load_manifest_rows selects shards by role ("sft_shard"), which is what the
+#   secure prepare writes; the top-level reader filters on schema/split fields the
+#   secure manifest does not carry and would silently return zero rows.
 from .secure_compat.data_pipeline import verify_data_manifest
+from .secure_compat.training import load_manifest_rows
 from .distillation import _teacher_license, distill_and_train, extract_prompts
 from .evaluation import _publish_evaluation
 from .frontier import (

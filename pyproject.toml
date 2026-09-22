@@ -52,6 +52,10 @@ data = [
   "huggingface-hub==0.36.0",
   "hf-transfer==0.1.9",
   "datasets==4.8.5",
+  # MinHash near-dedup and leakage LSH in secure_compat.data_pipeline. It was
+  # imported but never declared, so `data prepare` failed closed with
+  # ModuleNotFoundError -- the secure data path had never actually run.
+  "datasketch==1.6.5",
 ]
 dev = [
   "pytest==7.4.4",

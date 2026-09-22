@@ -514,14 +514,19 @@ def discover(policy: Policy, *, api=None, sample_limit: int = 20) -> dict[str, A
 def _source_rows(source: Mapping[str, Any]) -> Iterator[dict[str, Any]]:
     from datasets import load_dataset
 
-    stream = load_dataset(
+    # Non-streaming: resolve and download the config's parquet via huggingface_hub,
+    # then iterate locally. Per-row streaming issues one ranged HTTP request per
+    # example and stalls on networks where the metadata round-trip is slow; the
+    # bulk parquet download is a single resolved transfer and is the reliable path.
+    # max_rows still bounds how many rows the caller consumes.
+    dataset = load_dataset(
         source["dataset_id"],
         name=source["config"],
         split=source["split"],
         revision=source["revision"],
-        streaming=True,
+        streaming=False,
     )
-    for row in stream:
+    for row in dataset:
         yield dict(row)
 
 
