@@ -71,7 +71,7 @@ def test_fractional_budget_reaches_the_producer(monkeypatch):
     assert seen["budget_minutes"] == 7.5
 
 
-def test_dry_run_is_a_preflight_and_never_trains(monkeypatch, capsys):
+def test_dry_run_is_a_preflight_and_never_trains(monkeypatch, tmp_path, capsys):
     called = {"trained": False}
 
     def fake(**kwargs):
@@ -79,8 +79,10 @@ def test_dry_run_is_a_preflight_and_never_trains(monkeypatch, capsys):
         return {"status": "succeeded"}, 0
 
     monkeypatch.setattr(loop, "train_one_lever", fake)
-    # No prepared manifest in the test tree -> preflight fails closed with exit 2,
-    # and crucially the producer is never invoked.
+    # Point OUTPUTS at an empty dir so the preflight is hermetic: with no prepared
+    # manifest it fails closed with exit 2, independent of any real run artifacts
+    # in the repo's outputs/. The producer is never invoked either way.
+    monkeypatch.setattr(cli, "OUTPUTS", tmp_path / "outputs")
     code = cli.main(["train", "sft", "--dry-run"])
     assert code == 2
     assert called["trained"] is False
