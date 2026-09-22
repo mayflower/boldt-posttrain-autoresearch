@@ -152,3 +152,36 @@ uv run --locked python -m boldt_posttrain.cli train sft --real --allow-gpu --all
 uv run --locked python -m boldt_posttrain.cli eval run --real --allow-gpu --candidate <run_id>
 uv run --locked python -m boldt_posttrain.cli score --candidate <eval_run_id>
 ```
+
+## Loop verified end to end (2026-09-22)
+
+The AutoResearch loop now runs a full round on real data + the A6000. Fixing the
+config/producer/reader/HTTP/integrity defects below was what made it run at all;
+each had no test coverage, which is why it had never executed end to end:
+
+1. `verify_data_manifest` was imported with the recipe signature but called with
+   the secure `(data_root, policy)` one — the loop crashed there.
+2. `datasketch` (near-dedup / leakage LSH) was imported but never declared, so
+   `data prepare` failed closed with ModuleNotFoundError.
+3. `_source_rows` streamed row-by-row and stalled; switched to the official
+   non-streaming `load_dataset` (bulk parquet download).
+4. `_execute_lever` loaded rows with the recipe reader (filters on schema/split
+   fields the secure manifest lacks → zero rows); switched to the secure
+   role-based reader.
+5. Manual `train` produced recipe-format run cards the resolver rejected; routed
+   through the single secure producer so candidates resolve.
+6. `resolver._fetch` hand-rolled HTTP with urllib (broke on the missing system CA);
+   replaced with `huggingface_hub`.
+7. `_integrity_check` called a nonexistent `module.check()`; composed the checker's
+   real `changed_paths()` + `evaluate()`.
+
+Verified run (`secure-current.json`, EU-Instruct-Synthetic `de`, apache-2.0):
+`data prepare` → `train sft` → resolve → candidate `eval` (294-case suite + three
+lm-eval tasks) → `score` → `integrity`. A deliberately tiny smoke candidate scored
+-0.65 and the loop **rejected** it (disposition `rejected`, integrity `pass`,
+exit 1, error none) — the designed behaviour, not a crash. The smoke used reduced
+`max_steps`/`context_length`; the committed config carries the real values.
+
+The `score`→**promote** branch fires only when a candidate beats the baseline,
+which a smoke cannot; it is covered by tests (`test_promotion`,
+`test_specialist_frontier`) rather than this run.
