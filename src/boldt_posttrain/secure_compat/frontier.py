@@ -59,7 +59,11 @@ def _integrity_check(base_ref: str, repository_root: Path, policy: Policy) -> di
         raise FrontierError("integrity checker cannot be loaded")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    result = module.check(base_ref=base_ref, root=repository_root, policy_path=policy.path)
+    # The checker exposes changed_paths()+evaluate(), not a single check(); compose
+    # them. changed_paths(base_ref) unions the working tree with everything committed
+    # since base_ref, and evaluate() fails only on protected-surface violations.
+    paths = module.changed_paths(base_ref)
+    result = module.evaluate(paths)
     if result.get("status") != "pass":
         raise FrontierError(f"integrity check failed: {result}")
     return result
