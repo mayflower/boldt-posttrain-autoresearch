@@ -1,7 +1,7 @@
 ---
 description: Run or plan one SFT, CPT, or preference training job
 argument-hint: "dry|real sft|cpt|preference"
-allowed-tools: Bash(uv run --locked python -m boldt_posttrain.cli train *) Read Edit(configs/posttrain/current.json)
+allowed-tools: Bash(uv run --locked python -m boldt_posttrain.cli train *) Read Edit(configs/posttrain/current.json) Edit(configs/posttrain/secure-current.json)
 disable-model-invocation: true
 ---
 Real training always forwards all permissions:

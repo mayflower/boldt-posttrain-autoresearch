@@ -169,6 +169,7 @@
   "integrity": {
     "editable_globs": [
       "configs/posttrain/current.json",
+      "configs/posttrain/secure-current.json",
       "configs/posttrain/experiments/*.json",
       "docs/experiments/*.md"
     ],

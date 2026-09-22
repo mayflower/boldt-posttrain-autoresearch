@@ -15,9 +15,10 @@ def allowed(document: dict) -> tuple[bool, str]:
         return True, "read-only tool"
     if tool in {"Edit", "Write"}:
         path = str(tool_input.get("file_path") or tool_input.get("path") or "").replace("\\", "/")
-        editable = path == "configs/posttrain/current.json" or re.fullmatch(
-            r"configs/posttrain/experiments/[^/]+\.json", path
-        )
+        editable = path in {
+            "configs/posttrain/current.json",
+            "configs/posttrain/secure-current.json",
+        } or re.fullmatch(r"configs/posttrain/experiments/[^/]+\.json", path)
         return (
             bool(editable),
             "editable experiment surface"

@@ -14,6 +14,7 @@ def operative_docs() -> list[Path]:
     paths = [
         ROOT / "README.md",
         ROOT / "CLAUDE.md",
+        ROOT / "AGENTS.md",
         ROOT / "AUTORESEARCH_POSTTRAIN.md",
         *sorted((ROOT / "docs").glob("*.md")),
         *sorted((ROOT / ".claude/commands").glob("*.md")),

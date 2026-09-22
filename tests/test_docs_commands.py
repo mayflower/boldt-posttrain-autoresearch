@@ -10,6 +10,7 @@ def test_documented_cli_examples_parse_successfully():
     documents = [
         ROOT / "README.md",
         ROOT / "CLAUDE.md",
+        ROOT / "AGENTS.md",
         ROOT / "AUTORESEARCH_POSTTRAIN.md",
         *sorted((ROOT / "docs").glob("*.md")),
         *sorted((ROOT / ".claude/commands").glob("*.md")),
