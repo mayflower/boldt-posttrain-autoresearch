@@ -114,3 +114,41 @@ Working the plan surfaced a stronger coupling than the idealized 1→5 order ass
 
 - Training producer reroute (Stage 2) and the config-schema removal it unblocks.
   These change what runs and must be verified on the target GPU, not asserted.
+
+## Execution status (2026-09-22, branch refactor/consolidate-systems)
+
+Done and CPU-green (201 passing) on the branch:
+- **3a** config filename switch removed (`81b705d`).
+- **2 (code)** manual `train sft|cpt|preference` now runs the loop's single secure
+  producer via `loop.train_one_lever`; `run_training_trial` and the three recipe
+  training scripts are gone; a latent `verify_data_manifest` signature crash in
+  the loop was fixed (`3c0bdc4`).
+- **HF alignment** `hf-transfer` is a locked dep, auto-enabled on import (`826961f`).
+
+Blocked, not done:
+- **GPU end-to-end of stage 2.** The host's egress to HuggingFace's file backend
+  stalls the client on large files (plain / hf-transfer / HF_HUB_DISABLE_XET all
+  move 0 bytes; curl gets ~8 MB/s). Deferred until the network is fixed, per
+  decision; then the HF-idiomatic path runs unchanged.
+
+Remaining structural prerequisite before a documented end-to-end run works, even
+with networking fixed:
+- **Secure data + baseline CLI entries are unwired.** `data discover` / `data
+  prepare` still forward to the recipe scripts and write a recipe manifest, but
+  `train_one_lever` (and the loop) consume the secure manifest written by
+  `secure_compat.data_pipeline.run_cli` (the `data/current.json` pointer + event
+  chain), which no CLI verb invokes. Wire `_data_discover_command` /
+  `_data_prepare_command` (and baseline) to the secure pipeline before the run.
+  This is CPU-verifiable and independent of the network.
+
+### Runbook once networking is fixed and the secure data entries are wired
+
+```bash
+uv run --locked python -m boldt_posttrain.cli data discover --real --config configs/posttrain/secure-current.json
+uv run --locked python -m boldt_posttrain.cli data prepare  --real --config configs/posttrain/secure-current.json
+uv run --locked python -m boldt_posttrain.cli baseline run  --real --allow-gpu --config configs/posttrain/secure-current.json
+uv run --locked python -m boldt_posttrain.cli train sft --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+# train prints the candidate run id; it now resolves:
+uv run --locked python -m boldt_posttrain.cli eval run --real --allow-gpu --candidate <run_id>
+uv run --locked python -m boldt_posttrain.cli score --candidate <eval_run_id>
+```
