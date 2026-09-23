@@ -200,28 +200,32 @@ def resolve_hub_model(requested: str, policy: Policy) -> ResolvedModelRef:
     # files so a second resolve is free. The previous urllib path reinvented this
     # and broke on hosts without a system CA bundle.
     try:
-        from huggingface_hub import HfApi, hf_hub_download
-        from huggingface_hub.utils import HfHubHTTPError
+        from huggingface_hub import hf_hub_download
+        from huggingface_hub.utils import HfHubHTTPError, LocalEntryNotFoundError
     except ImportError as exc:  # pragma: no cover - the data/train extras ship it
         raise ResolutionError("Hub resolution requires huggingface_hub") from exc
 
-    try:
-        info = HfApi().model_info(repo_id, revision=revision)
-    except (HfHubHTTPError, OSError) as exc:
-        raise ResolutionError(f"Hub request failed for {repo_id}@{revision}: {exc}") from exc
-    if info.sha != revision:
-        raise ResolutionError("Hub returned a different model revision")
-
-    fingerprints: dict[str, str] = {}
-    config: dict[str, Any] = {}
-    for name in ("config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja"):
+    # No separate model_info() revision check: HUB_REF_RE guarantees a 40-hex commit,
+    # and hf_hub_download(revision=<sha>) returns that exact immutable commit or fails,
+    # so the revision is verified by construction. Try the cache first
+    # (local_files_only) and hit the network only on a miss -- a warm cache resolves
+    # with no round-trips, which matters where the Hub metadata call is slow.
+    def _fetch_file(name: str) -> Path:
         try:
-            path = Path(hf_hub_download(repo_id, name, revision=revision))
+            return Path(hf_hub_download(repo_id, name, revision=revision, local_files_only=True))
+        except (LocalEntryNotFoundError, OSError):
+            pass
+        try:
+            return Path(hf_hub_download(repo_id, name, revision=revision))
         except (HfHubHTTPError, OSError) as exc:
             raise ResolutionError(
                 f"Hub file {name} unavailable for {repo_id}@{revision}: {exc}"
             ) from exc
-        content = path.read_bytes()
+
+    fingerprints: dict[str, str] = {}
+    config: dict[str, Any] = {}
+    for name in ("config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja"):
+        content = _fetch_file(name).read_bytes()
         fingerprints[name] = hashlib.sha256(content).hexdigest()
         if name == "config.json":
             config = json.loads(content)
