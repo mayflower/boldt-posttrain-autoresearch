@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,3 +96,44 @@ def test_guard_accepts_documented_absolute_paths_and_notes_but_rejects_escapes()
             },
         }
     )[0]
+
+
+def run_guard_hook(document: dict) -> subprocess.CompletedProcess:
+    """Invoke the hook the way Claude Code does: JSON on stdin, protocol on stdout."""
+    return subprocess.run(
+        [sys.executable, str(ROOT / ".claude/hooks/guard_posttrain.py")],
+        input=json.dumps(document),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_guard_hook_speaks_the_pretooluse_protocol():
+    # A denial must use hookSpecificOutput.permissionDecision; a top-level
+    # {"decision": "deny"} is rejected by Claude Code as malformed and the call proceeds.
+    denied = run_guard_hook(
+        {"tool_name": "Edit", "tool_input": {"file_path": "configs/posttrain/policy.json"}}
+    )
+    assert denied.returncode == 0
+    output = json.loads(denied.stdout)
+    assert set(output) == {"hookSpecificOutput"}
+    assert output["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert output["hookSpecificOutput"]["permissionDecisionReason"]
+
+    shell = run_guard_hook({"tool_name": "Bash", "tool_input": {"command": "git log"}})
+    assert json.loads(shell.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    # Allowed calls emit nothing, so the regular permission settings still apply.
+    for document in (
+        {"tool_name": "Read", "tool_input": {"file_path": "AGENTS.md"}},
+        {"tool_name": "Write", "tool_input": {"file_path": "docs/experiments/trial.md"}},
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "uv run --locked python -m boldt_posttrain.cli status"},
+        },
+    ):
+        allowed = run_guard_hook(document)
+        assert allowed.returncode == 0
+        assert allowed.stdout.strip() == ""

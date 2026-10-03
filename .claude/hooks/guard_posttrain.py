@@ -53,10 +53,29 @@ def allowed(document: dict) -> tuple[bool, str]:
     return False, "tool is outside the autonomous trust boundary"
 
 
+def hook_output(is_allowed: bool, reason: str) -> dict | None:
+    """Claude Code PreToolUse protocol: deny via hookSpecificOutput.permissionDecision.
+
+    Allowed calls emit nothing, so the regular permission settings still apply. A
+    top-level ``{"decision": "deny"}`` is not a valid PreToolUse answer: Claude Code
+    rejects it as malformed and lets the tool call through.
+    """
+    if is_allowed:
+        return None
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
 def main() -> int:
     document = json.load(sys.stdin)
-    is_allowed, reason = allowed(document)
-    print(json.dumps({"decision": "allow" if is_allowed else "deny", "reason": reason}))
+    output = hook_output(*allowed(document))
+    if output is not None:
+        print(json.dumps(output))
     return 0
 
 
