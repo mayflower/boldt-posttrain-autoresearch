@@ -1,4 +1,4 @@
-"""Offline local teacher distillation with immutable data and student lineage."""
+"""Distillation CLI delegates to OPD; offline helpers remain a legacy Python API."""
 
 from __future__ import annotations
 
@@ -9,10 +9,8 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
-from . import config as config_module
 from . import provenance
 from ..artifacts import (
-    RUN_ID_RE,
     ArtifactRef,
     EventLog,
     atomic_write_bytes,
@@ -29,11 +27,10 @@ from .data_pipeline import (
     leakage_filter,
     normalize_license,
     normalize_row,
-    verify_data_manifest,
 )
 from .evaluation import load_transformers_model, suite_hash
-from ..policy import Policy, load_policy
-from ..resolver import OUTPUTS, ResolvedModelRef, resolve_model
+from ..policy import Policy
+from ..resolver import ResolvedModelRef
 from .training import train_adapter
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -405,39 +402,15 @@ def distill_and_train(
 
 
 def run_cli(args) -> tuple[dict[str, Any], int]:
-    import torch
+    # Keep direct script callers on the same on-policy producer as CLI and loop.
+    from ..loop import train_one_lever
 
-    if not torch.cuda.is_available():
-        raise DistillationError("real distillation requires CUDA and cannot fall back to CPU")
-    policy = load_policy()
-    config = config_module.load_experiment(ROOT / args.config)
-    source_manifest = verify_data_manifest(OUTPUTS / "data", policy)
-    prompts = extract_prompts(
-        source_manifest,
-        maximum=config.document["distillation"]["max_prompts"],
-    )
-    if RUN_ID_RE.fullmatch(args.teacher):
-        teacher = resolve_model(policy=policy, candidate=args.teacher)
-    else:
-        teacher_path = Path(args.teacher)
-        external = (teacher_path.resolve().parent,) if teacher_path.exists() else ()
-        teacher = resolve_model(policy=policy, model=args.teacher, external_roots=external)
-    license_id = _teacher_license(teacher, policy, args.teacher_license)
-    result = distill_and_train(
-        teacher=teacher,
-        teacher_license=license_id,
-        student_model_source=policy.seed_model["repo_id"],
-        student_model_revision=policy.seed_model["revision"],
-        prompts=prompts,
-        output_data_root=OUTPUTS / "data",
-        output_checkpoint_root=OUTPUTS / "checkpoints",
-        policy=policy,
-        training=config.document["training"],
-        generation=config.document["distillation"],
-        target_modules=config.document["training"]["target_modules"],
-        device="cuda:0",
-        qlora=config.document["training"]["method"] == "qlora",
+    return train_one_lever(
+        lever="distill",
+        config_path=ROOT / args.config,
+        budget_minutes=args.budget_minutes or 90.0,
+        allow_gpu=args.allow_gpu,
         allow_checkpoints=args.allow_checkpoints,
-        budget_minutes=args.budget_minutes or config.document["resources"]["budget_minutes"],
+        teacher=args.teacher,
+        teacher_license=args.teacher_license,
     )
-    return result, 0 if result["status"] == "succeeded" else 1

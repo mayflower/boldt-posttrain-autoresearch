@@ -245,7 +245,13 @@ def _train_command(args: argparse.Namespace) -> int:
             policy = load_policy()
             config = cfgmod.load_experiment(config_path)
             config.document["experiment"]["lever"] = args.action
-            verify_data_manifest(OUTPUTS / "data", policy, repository_root=ROOT)
+            from .online import ONLINE_LEVERS, online_rows, validate_online_policy
+
+            if args.action in ONLINE_LEVERS:
+                validate_online_policy(config.document, policy)
+            manifest = verify_data_manifest(OUTPUTS / "data", policy, repository_root=ROOT)
+            if args.action in ONLINE_LEVERS:
+                online_rows(manifest, config.document, root=ROOT)
         except Exception as exc:  # noqa: BLE001
             print(json.dumps({"status": "failed", "mode": "dry_run", "error": str(exc)}))
             return 2
@@ -270,6 +276,8 @@ def _train_command(args: argparse.Namespace) -> int:
         allow_gpu=args.allow_gpu,
         allow_checkpoints=args.allow_checkpoints,
         specialist=getattr(args, "specialist", None),
+        teacher=getattr(args, "teacher", None),
+        teacher_license=getattr(args, "teacher_license", None),
     )
     print(json.dumps(result, ensure_ascii=False))
     return code
@@ -350,25 +358,9 @@ def _doctor_command(args: argparse.Namespace) -> int:
 
 
 def _distill_command(args: argparse.Namespace) -> int:
-    from .secure_compat.distillation import run_cli
-
-    if not (args.real and args.allow_gpu and args.allow_checkpoints):
-        print(
-            json.dumps(
-                {
-                    "status": "failed",
-                    "error": "distillation requires --real --allow-gpu --allow-checkpoints",
-                }
-            )
-        )
-        return 2
-    try:
-        result, exit_code = run_cli(args)
-    except Exception as exc:
-        print(json.dumps({"status": "failed", "error": str(exc)}))
-        return 4
-    print(json.dumps(result, sort_keys=True))
-    return exit_code
+    args.action = "distill"
+    args.budget_minutes = args.budget_minutes or 90.0
+    return _train_command(args)
 
 
 def _loop_command(args: argparse.Namespace) -> int:
@@ -1443,7 +1435,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     train = commands.add_parser("train")
     train_sub = train.add_subparsers(dest="action", required=True, parser_class=GatedParser)
-    for name in ("sft", "cpt", "preference"):
+    for name in ("sft", "cpt", "preference", "grpo", "rlvr", "opd", "sdpo", "sdft", "distill"):
         secure_train = train_sub.add_parser(name)
         _explicit_mode(secure_train, gpu=True)
         secure_train.add_argument(
@@ -1451,34 +1443,17 @@ def build_parser() -> argparse.ArgumentParser:
         )
         secure_train.add_argument("--budget-minutes", type=float, default=90.0)
         secure_train.add_argument("--specialist")
-        secure_train.add_argument("--out", default=str(ROOT / "outputs/posttrain/runs"))
-        secure_train.add_argument("--data", default=str(ROOT / "outputs/posttrain/data"))
-        secure_train.add_argument("--device", default="cuda:0")
-        secure_train.add_argument("--mix-plan")
+        if name in {"sft", "cpt", "preference"}:
+            secure_train.add_argument("--out", default=str(ROOT / "outputs/posttrain/runs"))
+            secure_train.add_argument("--data", default=str(ROOT / "outputs/posttrain/data"))
+            secure_train.add_argument("--device", default="cuda:0")
+            secure_train.add_argument("--mix-plan")
         if name == "preference":
             secure_train.add_argument("--method", choices=("dpo", "kto", "orpo"))
+        if name in {"opd", "distill"}:
+            secure_train.add_argument("--teacher")
+            secure_train.add_argument("--teacher-license")
         secure_train.set_defaults(handler=_train_command)
-    rlvr = train_sub.add_parser("rlvr")
-    rlvr.add_argument("--real", action="store_true")
-    rlvr.add_argument("--allow-gpu", action="store_true")
-    rlvr.add_argument("--allow-checkpoints", action="store_true")
-    rlvr.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    rlvr.add_argument("--policy", default=str(ROOT / "configs/posttrain/recipe-policy.json"))
-    rlvr.add_argument("--data", default=str(ROOT / "outputs/posttrain/data"))
-    rlvr.add_argument("--output", default=str(ROOT / "outputs/posttrain/runs"))
-    rlvr.add_argument("--device", default="cuda:0")
-    rlvr.add_argument("--budget-minutes", type=int, default=90)
-    rlvr.set_defaults(handler=_train_rlvr)
-    grpo = train_sub.add_parser("grpo")
-    grpo.add_argument("--real", action="store_true")
-    grpo.add_argument("--allow-gpu", action="store_true")
-    grpo.add_argument("--allow-checkpoints", action="store_true")
-    grpo.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    grpo.add_argument("--data", default=str(ROOT / "outputs/posttrain/data"))
-    grpo.add_argument("--output", default=str(ROOT / "outputs/posttrain/runs"))
-    grpo.add_argument("--device", default="cuda:0")
-    grpo.add_argument("--budget-minutes", type=int, default=90)
-    grpo.set_defaults(handler=_train_grpo)
 
     data = commands.add_parser("data")
     data_sub = data.add_subparsers(dest="action", required=True, parser_class=GatedParser)

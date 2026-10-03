@@ -107,11 +107,15 @@ def test_read_only_commands_execute_without_routing_sentinels(capsys):
     assert json.loads(capsys.readouterr().out)["status"] == "succeeded"
 
 
-def test_rlvr_defaults_to_recipe_policy():
+def test_rlvr_defaults_to_secure_loop_config():
+    import boldt_posttrain.cli as cli
+
     args = build_parser().parse_args(
         ["train", "rlvr", "--real", "--allow-gpu", "--allow-checkpoints"]
     )
-    assert Path(args.policy).name == "recipe-policy.json"
+    assert Path(args.config).name == "secure-current.json"
+    assert args.handler is cli._train_command
+    assert not hasattr(args, "policy"), "RLVR must use the loop's protected policy"
 
 
 def test_train_dry_run_is_a_preflight_that_writes_no_artifact(tmp_path: Path, capsys):

@@ -112,6 +112,10 @@ def reviewed_license(
 
 def classify_schema(row: Mapping[str, Any]) -> str | None:
     keys = set(row)
+    if {"prompt", "task_type", "ground_truth"} <= keys:
+        return "rlvr"
+    if {"prompt", "solution"} <= keys:
+        return "verified_math"
     if "messages" in keys or "conversations" in keys or {"prompt", "response"} <= keys:
         return "sft"
     if {"prompt", "chosen", "rejected"} <= keys:
@@ -157,7 +161,20 @@ def normalize_row(row: Mapping[str, Any], source: Mapping[str, Any], row_id: str
         },
         "license": source["license"],
     }
-    if schema == "sft":
+    if schema in {"rlvr", "verified_math"}:
+        from ..online import prompt_messages, validate_truth
+
+        try:
+            normalized["prompt"] = prompt_messages(row["prompt"])
+            if schema == "verified_math":
+                validate_truth("math_accuracy", {"value": row["solution"]})
+                normalized["solution"] = row["solution"]
+            else:
+                validate_truth(row["task_type"], row["ground_truth"])
+                normalized.update(task_type=row["task_type"], ground_truth=row["ground_truth"])
+        except (ValueError, TypeError, KeyError) as exc:
+            raise DataError(f"invalid online training row: {exc}") from exc
+    elif schema == "sft":
         if "messages" in row:
             normalized["messages"] = _messages(row["messages"])
         elif "conversations" in row:
@@ -189,6 +206,9 @@ def normalize_row(row: Mapping[str, Any], source: Mapping[str, Any], row_id: str
 
 
 def row_texts(row: Mapping[str, Any]) -> list[str]:
+    if row["type"] in {"rlvr", "verified_math"}:
+        label = row.get("solution", json.dumps(row.get("ground_truth"), ensure_ascii=False))
+        return [*[item["content"] for item in row["prompt"]], label]
     if row["type"] == "sft":
         return [item["content"] for item in row["messages"]]
     if row["type"] == "preference":
@@ -690,10 +710,10 @@ def prepare(policy: Policy, config_path: Path, *, rows_provider=_source_rows) ->
             raise DataError("benchmark leakage detected")
         if not clean:
             raise DataError("no trainable rows remain after policy filters")
-        groups = {
-            kind: [row for row in clean if row["type"] == kind]
-            for kind in ("sft", "preference", "cpt")
-        }
+        kinds = ["sft", "preference", "cpt"] + [
+            kind for kind in ("rlvr", "verified_math") if any(row["type"] == kind for row in clean)
+        ]
+        groups = {kind: [row for row in clean if row["type"] == kind] for kind in kinds}
         tokenizer = load_tokenizer(
             policy.seed_model["repo_id"], revision=policy.seed_model["revision"]
         )
@@ -717,6 +737,8 @@ def prepare(policy: Policy, config_path: Path, *, rows_provider=_source_rows) ->
             "sft": "train_sft-00000-of-00001.jsonl",
             "preference": "train_preference-00000-of-00001.jsonl",
             "cpt": "train_cpt-00000-of-00001.jsonl",
+            "rlvr": "train_rlvr-00000-of-00001.jsonl",
+            "verified_math": "train_verified_math-00000-of-00001.jsonl",
         }
         shard_refs: list[ArtifactRef] = []
         for kind, rows in groups.items():

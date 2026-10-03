@@ -17,7 +17,7 @@ from .artifacts import RUN_ID_RE, EventLog, atomic_write_json, new_run_id, sha25
 #   secure manifest does not carry and would silently return zero rows.
 from .secure_compat.data_pipeline import verify_data_manifest
 from .secure_compat.training import load_manifest_rows
-from .distillation import _teacher_license, distill_and_train, extract_prompts
+from .distillation import _teacher_license
 from .evaluation import _publish_evaluation
 from .frontier import (
     _integrity_check,
@@ -26,6 +26,8 @@ from .frontier import (
     promote_candidate,
 )
 from .merge import run_search
+from .online import ONLINE_LEVERS, online_method, validate_online_policy
+from .online_training import train_online_candidate
 from .policy import Policy, load_policy
 from .preference import _manifest_rows, train_preference_adapter
 from .resolver import OUTPUTS, resolve_model
@@ -98,39 +100,33 @@ def _execute_lever(
             repository_root=repository_root,
             data_metadata=manifest,
         )
-    if lever == "distill":
+    if lever in ONLINE_LEVERS:
+        validate_online_policy(config.document, policy)
         settings = config.document["distillation"]
-        teacher_name = settings["teacher"]
-        if RUN_ID_RE.fullmatch(teacher_name):
-            teacher = resolve_model(
-                policy=policy,
-                candidate=teacher_name,
-                outputs_root=outputs_root,
-            )
-        else:
-            teacher = resolve_model(policy=policy, model=teacher_name)
-        license_id = _teacher_license(teacher, policy, settings["teacher_license"])
-        return distill_and_train(
-            teacher=teacher,
-            teacher_license=license_id,
-            student_model_source=policy.seed_model["repo_id"],
-            student_model_revision=policy.seed_model["revision"],
-            prompts=extract_prompts(
-                manifest,
-                repository_root=repository_root,
-                maximum=settings["max_prompts"],
-            ),
-            output_data_root=outputs_root / "data",
-            output_checkpoint_root=outputs_root / "checkpoints",
+        teacher = None
+        license_id = None
+        if online_method(lever) == "opd":
+            teacher_name = settings["teacher"]
+            if RUN_ID_RE.fullmatch(teacher_name):
+                teacher = resolve_model(
+                    policy=policy,
+                    candidate=teacher_name,
+                    outputs_root=outputs_root,
+                )
+            else:
+                teacher = resolve_model(policy=policy, model=teacher_name)
+            license_id = _teacher_license(teacher, policy, settings["teacher_license"])
+        return train_online_candidate(
+            config=config.document,
             policy=policy,
-            training=training,
-            generation=settings,
-            target_modules=training["target_modules"],
-            device="cuda:0",
-            qlora=training["method"] == "qlora",
-            allow_checkpoints=allow_checkpoints,
-            budget_minutes=budget,
+            manifest=manifest,
+            outputs_root=outputs_root,
             repository_root=repository_root,
+            deadline=deadline,
+            allow_gpu=allow_gpu,
+            allow_checkpoints=allow_checkpoints,
+            teacher_ref=teacher,
+            teacher_license=license_id,
         )
     if lever == "merge":
         settings = config.document["merge"]
@@ -150,11 +146,12 @@ def _execute_lever(
             raise LoopError("one loop round must produce exactly one merge candidate")
         return result["candidates"][0]
     raise LoopError(
-        "loop experiment lever must produce one candidate: sft, cpt, preference, distill, or merge"
+        "loop experiment lever must produce one candidate: sft, cpt, preference, "
+        "distill/opd, grpo, rlvr, sdpo, sdft, or merge"
     )
 
 
-_MANUAL_LEVERS = {"sft", "cpt", "preference"}
+_MANUAL_LEVERS = {"sft", "cpt", "preference", *ONLINE_LEVERS}
 
 
 def train_one_lever(
@@ -165,6 +162,8 @@ def train_one_lever(
     allow_gpu: bool,
     allow_checkpoints: bool,
     specialist: str | None = None,
+    teacher: str | None = None,
+    teacher_license: str | None = None,
     outputs_root: Path = OUTPUTS,
     repository_root: Path = ROOT,
 ) -> tuple[dict[str, Any], int]:
@@ -197,6 +196,12 @@ def train_one_lever(
         config.document["experiment"]["lever"] = lever
         if specialist:
             config.document["training"]["specialist"] = specialist
+        if teacher is not None:
+            config.document["distillation"]["teacher"] = teacher
+        if teacher_license is not None:
+            config.document["distillation"]["teacher_license"] = teacher_license
+        if lever in ONLINE_LEVERS:
+            validate_online_policy(config.document, policy)
         manifest = verify_data_manifest(
             outputs_root / "data", policy, repository_root=repository_root
         )

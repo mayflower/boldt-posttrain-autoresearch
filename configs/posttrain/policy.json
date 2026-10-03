@@ -132,7 +132,12 @@
       "cpt",
       "dpo",
       "kto",
-      "orpo"
+      "orpo",
+      "grpo",
+      "rloo",
+      "opd",
+      "sdpo",
+      "sdft"
     ],
     "allowed_specialists": [
       "general-de",

@@ -175,7 +175,27 @@ class ExperimentConfig:
 
 def validate_config_dict(document: dict[str, Any]) -> list[str]:
     errors = _find_forbidden(document)
-    errors.extend(_validate(document, _SCHEMA, "config"))
+    # Online objectives add experiment parameters, never policy overrides. Older
+    # SFT/CPT/preference experiments retain their exact schema and defaults.
+    errors.extend(
+        _validate({k: v for k, v in document.items() if k != "online"}, _SCHEMA, "config")
+    )
+    experiment = document.get("experiment")
+    lever = experiment.get("lever") if isinstance(experiment, dict) else None
+    if "online" in document or lever in {
+        "grpo",
+        "rlvr",
+        "opd",
+        "sdpo",
+        "sdft",
+        "distill",
+    }:
+        from ..online import online_settings
+
+        try:
+            online_settings(document)
+        except (ValueError, TypeError, KeyError) as exc:
+            errors.append(str(exc))
     if document.get("schema_version") != 1:
         errors.append("config.schema_version must be 1")
     return sorted(set(errors))
