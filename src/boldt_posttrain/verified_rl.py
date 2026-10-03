@@ -16,6 +16,7 @@ from .training import (
     load_trainable_adapter,
     make_peft_config,
     validate_liger,
+    warmup_steps_from_ratio,
 )
 
 
@@ -114,13 +115,16 @@ def make_grpo_config(
         output_dir=str(output_dir),
         max_steps=steps,
         learning_rate=float(training["learning_rate"]),
-        warmup_ratio=float(training.get("warmup_ratio", 0.0)),
+        # Transformers 5 removed warmup_ratio; warmup_steps in [0, 1) is the same ratio.
+        warmup_steps=warmup_steps_from_ratio(training.get("warmup_ratio", 0.0), steps),
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         gradient_accumulation_steps=int(training.get("gradient_accumulation_steps", 1)),
         gradient_checkpointing=bool(training.get("gradient_checkpointing", True)),
         num_generations=generations,
-        max_prompt_length=int(verified["max_prompt_length"]),
+        # TRL 1.x GRPO no longer truncates prompts (max_prompt_length was removed). The
+        # prompt bound is enforced fail-closed by validate_verified_math_rows before
+        # training, so no prompt is ever truncated.
         max_completion_length=int(verified["max_completion_length"]),
         temperature=float(verified["temperature"]),
         beta=float(verified["beta"]),

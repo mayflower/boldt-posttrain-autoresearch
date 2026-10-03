@@ -288,6 +288,8 @@ RUN_TYPES = {
     "train_sdpo",
     "train_sdft",
     "train_opd",
+    "train_seqkd",
+    "seqkd_generate",
     "distill",
     "merge",
     "eval",

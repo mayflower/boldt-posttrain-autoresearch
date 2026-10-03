@@ -247,16 +247,26 @@ def train_adapter(
     parent_run_ids: list[str] | None = None,
     lineage: Mapping[str, Any] | None = None,
     data_metadata: Mapping[str, Any] | None = None,
+    run_type: str | None = None,
 ) -> dict[str, Any]:
     if not allow_checkpoints:
         raise TrainingError("checkpoint writes require explicit permission")
     if kind not in {"sft", "cpt"}:
         raise TrainingError(f"unsupported trainer kind {kind}")
+    # seqkd trains plain SFT on teacher answers; only its provenance label differs.
+    run_type = run_type or ("train_sft" if kind == "sft" else "train_cpt")
+    if run_type not in {"train_sft", "train_cpt", "train_seqkd"} or (
+        run_type == "train_seqkd" and kind != "sft"
+    ):
+        raise TrainingError(f"unsupported run type {run_type} for trainer kind {kind}")
     import torch
     from peft import LoraConfig
     from trl import SFTConfig, SFTTrainer
 
-    run_id = new_run_id(f"train-{kind}")
+    # Local import: boldt_posttrain.training re-exports this module at import time.
+    from ..training import warmup_steps_from_ratio
+
+    run_id = new_run_id(run_type.replace("_", "-"))
     staging = output_root / ".staging" / run_id
     final_checkpoint = output_root / run_id
     state_root = output_root.parent
@@ -293,9 +303,7 @@ def train_adapter(
         if not any(probe.get("assistant_masks", [])):
             raise TrainingError("assistant-only loss mask is empty")
     events = EventLog(state_root)
-    start_event = events.append(
-        "run_started", run_id, {"run_type": "train_sft" if kind == "sft" else "train_cpt"}
-    )
+    start_event = events.append("run_started", run_id, {"run_type": run_type})
     staging.mkdir(parents=True)
     callback = DeadlineCallback(deadline)
     lora = LoraConfig(
@@ -313,7 +321,7 @@ def train_adapter(
         learning_rate=experiment["learning_rate"],
         num_train_epochs=experiment["num_train_epochs"],
         max_steps=experiment["max_steps"],
-        warmup_ratio=experiment["warmup_ratio"],
+        warmup_steps=warmup_steps_from_ratio(experiment["warmup_ratio"], experiment["max_steps"]),
         logging_steps=1,
         save_strategy="no",
         report_to="none",
@@ -393,13 +401,20 @@ def train_adapter(
     card = {
         "schema_version": 1,
         "run_id": run_id,
-        "run_type": "train_sft" if kind == "sft" else "train_cpt",
+        "run_type": run_type,
         "mode": "real",
         "status": status,
         "started_at": start_event["event"]["timestamp"],
         "finished_at": now,
         "duration_seconds": metrics["wall_clock_seconds"],
-        "command": ["python", "-m", "boldt_posttrain.cli", "train", kind, "--real"],
+        "command": [
+            "python",
+            "-m",
+            "boldt_posttrain.cli",
+            "train",
+            "seqkd" if run_type == "train_seqkd" else kind,
+            "--real",
+        ],
         "git": provenance.collect_git("HEAD", root=repository_root),
         "policy": {"path": str(policy.path), "sha256": sha256_file(policy.path)},
         "experiment": {

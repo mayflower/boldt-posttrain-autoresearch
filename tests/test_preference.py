@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,9 @@ from boldt_posttrain.preference import (
     validate_preference_rows,
 )
 from boldt_posttrain.training import make_peft_config
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class Tokenizer:
@@ -89,7 +93,6 @@ def test_conversational_fixture_trains_each_preference_method_one_step(
             "per_device_train_batch_size": 2,
             "learning_rate": 1e-3,
             "max_length": 32,
-            "max_prompt_length": 16,
             "gradient_checkpointing": False,
             "save_strategy": "no",
             "report_to": "none",
@@ -234,3 +237,119 @@ def test_kto_and_orpo_use_validation_and_select_best_checkpoint(tmp_path, tiny_m
     )
     assert result.trainer.eval_dataset is not None
     assert result.trainer.state.best_metric is not None
+
+
+@pytest.mark.parametrize("method", ["dpo", "kto", "orpo"])
+def test_sequence_bound_is_prompt_plus_completion_not_trl_default(tmp_path, tiny_model_dir, method):
+    datasets = pytest.importorskip("datasets")
+    transformers = pytest.importorskip("transformers")
+    rows = [
+        normalize_preference_row(
+            {"prompt": "Frage eins", "chosen": "Antwort richtig", "rejected": "Antwort falsch"}
+        ),
+        normalize_preference_row(
+            {"prompt": "Frage zwei", "chosen": "Antwort zwei", "rejected": "Antwort drei"}
+        ),
+    ]
+    common = {
+        "max_steps": 1,
+        "per_device_train_batch_size": 2,
+        "learning_rate": 1e-3,
+        "gradient_checkpointing": False,
+        "save_strategy": "no",
+        "report_to": "none",
+        "use_cpu": True,
+        "disable_tqdm": True,
+    }
+    peft = make_peft_config(
+        {
+            "lora_r": 4,
+            "lora_alpha": 8,
+            "target_modules": ["q_proj", "v_proj"],
+            "lora_init": "default",
+        }
+    )
+    bounds = {"max_prompt_length": 1000, "max_completion_length": 1000}
+    for index, (caller_bound, expected) in enumerate(((None, 2000), (40, 40))):
+        result = train_preference(
+            method=method,
+            model=str(tiny_model_dir),
+            tokenizer=transformers.AutoTokenizer.from_pretrained(tiny_model_dir),
+            dataset=datasets.Dataset.from_list(rows),
+            output_dir=tmp_path / f"{method}-{index}",
+            training_args=common
+            if caller_bound is None
+            else {**common, "max_length": caller_bound},
+            preference_config=bounds,
+            peft_config=peft,
+        )
+        # Never TRL's silent 1024-token default: the gates admit prompt + completion.
+        assert result.trainer.args.max_length == expected
+
+
+def _secure_preference_call(monkeypatch, tmp_path, method, rpo_alpha):
+    from types import SimpleNamespace
+
+    from boldt_posttrain.secure_compat import preference as secure
+
+    captured = {}
+
+    class Stop(Exception):
+        pass
+
+    def config_class(**kwargs):
+        captured.update(kwargs)
+        raise Stop
+
+    monkeypatch.setattr(
+        secure, "create_model_and_tokenizer", lambda *a, **k: (SimpleNamespace(), None)
+    )
+    for name in ("validate_tokenizer", "validate_target_modules"):
+        monkeypatch.setattr(secure, name, lambda *a, **k: None)
+    monkeypatch.setattr(secure, "collect_model_metadata", lambda *a, **k: {})
+    monkeypatch.setattr(secure, "validate_preference_rows", lambda *a, **k: {})
+    monkeypatch.setattr(secure, "response_suppression_diagnostics", lambda *a, **k: {})
+    monkeypatch.setattr(secure, "preference_dataset", lambda *a, **k: [])
+    monkeypatch.setattr(secure, "_trainer", lambda m: (None, config_class))
+    document = json.loads((ROOT / "configs/posttrain/secure-current.json").read_text())
+    preference = {**document["preference"], "method": method, "rpo_alpha": rpo_alpha}
+    training = {**document["training"], "per_device_batch_size": 2}
+    call = dict(
+        method=method,
+        model_source="seed",
+        revision=None,
+        rows=[{"prompt": "p", "chosen": "a", "rejected": "b"}],
+        output_root=tmp_path / "checkpoints",
+        policy=None,
+        training=training,
+        preference=preference,
+        target_modules=["q_proj"],
+        device="cpu",
+        qlora=False,
+        allow_checkpoints=True,
+        budget_minutes=1,
+        repository_root=tmp_path,
+    )
+    return secure, Stop, captured, call
+
+
+def test_secure_dpo_turns_rpo_alpha_into_weighted_sft_loss(monkeypatch, tmp_path):
+    secure, stop, captured, call = _secure_preference_call(monkeypatch, tmp_path, "dpo", 0.5)
+    with pytest.raises(stop):
+        secure.train_preference_adapter(**call)
+    assert captured["loss_type"] == ["sigmoid", "sft"]
+    assert captured["loss_weights"] == [1.0, 0.5]
+    secure, stop, captured, call = _secure_preference_call(monkeypatch, tmp_path, "dpo", 0.0)
+    with pytest.raises(stop):
+        secure.train_preference_adapter(**call)
+    assert captured["loss_type"] == ["sigmoid"] and "loss_weights" not in captured
+
+
+@pytest.mark.parametrize("method", ["kto", "orpo"])
+def test_secure_rpo_alpha_is_rejected_for_non_dpo_methods(monkeypatch, tmp_path, method):
+    secure, _, _, call = _secure_preference_call(monkeypatch, tmp_path, method, 0.5)
+    monkeypatch.setattr(
+        secure, "create_model_and_tokenizer", lambda *a, **k: pytest.fail("must reject first")
+    )
+    with pytest.raises(secure.PreferenceError, match="applies only to DPO"):
+        secure.train_preference_adapter(**call)

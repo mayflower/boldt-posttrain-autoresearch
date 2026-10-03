@@ -142,13 +142,33 @@ def _train_command(args: argparse.Namespace) -> int:
             policy = load_policy()
             config = cfgmod.load_experiment(config_path)
             config.document["experiment"]["lever"] = args.action
-            from .online import ONLINE_LEVERS, online_rows, validate_online_policy
+            from .online import ONLINE_LEVERS, online_method, online_rows, validate_online_policy
 
             if args.action in ONLINE_LEVERS:
                 validate_online_policy(config.document, policy)
+            if args.action in ONLINE_LEVERS and online_method(args.action) == "opd":
+                teacher = (
+                    getattr(args, "teacher", None) or config.document["distillation"]["teacher"]
+                )
+                seed = policy.seed_model
+                if teacher in {seed["repo_id"], f"{seed['repo_id']}@{seed['revision']}"}:
+                    raise ValueError(
+                        "OPD requires a distinct teacher; the student seed supplies no "
+                        "additional teaching signal (an external teacher with a different "
+                        "tokenizer needs the seqkd lever instead)"
+                    )
             manifest = verify_data_manifest(OUTPUTS / "data", policy, repository_root=ROOT)
             if args.action in ONLINE_LEVERS:
                 online_rows(manifest, config.document, root=ROOT)
+            if args.action == "seqkd":
+                from .seqkd import validate_seqkd_policy, verify_generation
+
+                verify_generation(
+                    validate_seqkd_policy(config.document, policy),
+                    policy,
+                    outputs_root=OUTPUTS,
+                    repository_root=ROOT,
+                )
         except Exception as exc:  # noqa: BLE001
             print(json.dumps({"status": "failed", "mode": "dry_run", "error": str(exc)}))
             return 2
@@ -244,6 +264,50 @@ def _doctor_command(args: argparse.Namespace) -> int:
         result = doctor(mode=args.mode, real=args.real)
     except Exception as exc:
         print(json.dumps({"status": "failed", "error": str(exc)}))
+        return 4
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+def _seqkd_generate_command(args: argparse.Namespace) -> int:
+    """Stage 1 of sequence-level distillation: teacher answers -> verified SFT manifest."""
+    from .seqkd import generate, select_prompts, validate_seqkd_policy
+
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = ROOT / config_path
+    try:
+        policy = load_policy()
+        config = cfgmod.load_experiment(config_path)
+        settings = validate_seqkd_policy(config.document, policy)
+        manifest = verify_data_manifest(OUTPUTS / "data", policy, repository_root=ROOT)
+        if args.dry_run:
+            from .seqkd import _shard_rows
+
+            prompts = select_prompts(
+                _shard_rows(manifest, "sft_shard", ROOT),
+                maximum=settings["max_prompts"],
+                seed=settings["seed"],
+            )
+            if not prompts:
+                raise ValueError("the verified SFT manifest contains no answerable prompts")
+            result = {
+                **_plan("seqkd-generate", config_path),
+                "teacher": settings["teacher"],
+                "prompts": len(prompts),
+                "prompt_source": manifest["run_id"],
+            }
+            print(json.dumps(result, sort_keys=True))
+            return 0
+        if not args.allow_gpu:
+            raise ValueError("seqkd generation requires --real --allow-gpu")
+        import torch
+
+        if not torch.cuda.is_available():
+            raise ValueError("seqkd generation requires CUDA and never falls back to CPU")
+        result = generate(policy, config_path, outputs_root=OUTPUTS, repository_root=ROOT)
+    except Exception as exc:  # noqa: BLE001 -- surface any failure as a nonzero exit
+        print(json.dumps({"status": "failed", "error": f"{type(exc).__name__}: {exc}"}))
         return 4
     print(json.dumps(result, sort_keys=True))
     return 0
@@ -527,7 +591,9 @@ def _teacher(model_ref: str, device: str, sampling: Mapping[str, Any]):
     from .training import load_tokenizer
 
     tokenizer = load_tokenizer(model_name, revision=revision)
-    model = AutoModelForCausalLM.from_pretrained(model_name, revision=revision).to(device)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name, revision=revision, dtype=torch.float32
+    ).to(device)
     model.eval()
 
     def generate(task: Mapping[str, Any], index: int) -> str:
@@ -1123,7 +1189,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     train = commands.add_parser("train")
     train_sub = train.add_subparsers(dest="action", required=True, parser_class=GatedParser)
-    for name in ("sft", "cpt", "preference", "grpo", "rlvr", "opd", "sdpo", "sdft", "distill"):
+    for name in (
+        "sft",
+        "cpt",
+        "preference",
+        "grpo",
+        "rlvr",
+        "opd",
+        "sdpo",
+        "sdft",
+        "distill",
+        "seqkd",
+    ):
         secure_train = train_sub.add_parser(name)
         _explicit_mode(secure_train, gpu=True)
         secure_train.add_argument(
@@ -1204,6 +1281,14 @@ def build_parser() -> argparse.ArgumentParser:
     merge_search.add_argument("--config", default="configs/posttrain/secure-current.json")
     merge_search.add_argument("--budget-minutes", type=float, default=90.0)
     merge_search.set_defaults(handler=_merge_command)
+
+    seqkd = commands.add_parser("seqkd")
+    seqkd_sub = seqkd.add_subparsers(dest="action", required=True, parser_class=GatedParser)
+    seqkd_generate = seqkd_sub.add_parser("generate")
+    _explicit_mode(seqkd_generate)
+    seqkd_generate.add_argument("--allow-gpu", action="store_true")
+    seqkd_generate.add_argument("--config", default="configs/posttrain/secure-current.json")
+    seqkd_generate.set_defaults(handler=_seqkd_generate_command)
 
     distill = commands.add_parser("distill")
     _explicit_mode(distill, gpu=True)

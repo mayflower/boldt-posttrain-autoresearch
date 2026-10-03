@@ -68,7 +68,8 @@ def eligible_input(
     if (
         card["mode"] != "real"
         or card["status"] != "succeeded"
-        or card["run_type"] not in {"train_sft", "train_cpt", "train_preference", "merge"}
+        or card["run_type"]
+        not in {"train_sft", "train_cpt", "train_seqkd", "train_preference", "merge"}
     ):
         raise MergeError("merge input is not a successful real training or merge run")
     if card["data"].get("license_status") != "usable" or card["data"].get("leakage_statistics") != {

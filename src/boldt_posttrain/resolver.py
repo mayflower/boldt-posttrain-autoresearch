@@ -196,7 +196,7 @@ def resolve_hub_model(requested: str, policy: Policy) -> ResolvedModelRef:
     else:
         repo_id, revision = match.group("repo"), match.group("revision")
     # Use the official huggingface_hub client, not a hand-rolled urllib fetch: it
-    # verifies TLS via certifi, honours HF_HUB_ENABLE_HF_TRANSFER, and caches the
+    # verifies TLS via certifi, downloads through hf-xet, and caches the
     # files so a second resolve is free. The previous urllib path reinvented this
     # and broke on hosts without a system CA bundle.
     try:

@@ -128,7 +128,8 @@ def checkpoint_smoke(adapter_path: Path, base_model: str, prompt: str, *, device
     except ImportError as exc:
         raise RuntimeError("checkpoint smoke requires the train dependencies") from exc
     tokenizer = load_tokenizer(base_model)
-    base = AutoModelForCausalLM.from_pretrained(base_model).to(device)
+    # Transformers 5 defaults from_pretrained to dtype="auto"; keep the 4.x float32 load.
+    base = AutoModelForCausalLM.from_pretrained(base_model, dtype=torch.float32).to(device)
     model = PeftModel.from_pretrained(base, str(adapter_path)).to(device)
     encoded = tokenizer(prompt, return_tensors="pt").to(device)
     with torch.inference_mode():
@@ -190,7 +191,7 @@ def train_rlvr(
         except ImportError as exc:
             raise RuntimeError("RLVR continuation requires transformers") from exc
         model_input = load_trainable_adapter(
-            AutoModelForCausalLM.from_pretrained(model_ref), parent_adapter
+            AutoModelForCausalLM.from_pretrained(model_ref, dtype=torch.float32), parent_adapter
         )
         peft_config = None
     trainer = RLOOTrainer(

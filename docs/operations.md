@@ -16,10 +16,9 @@ seed accessibility/fingerprints, disk space, lm-eval task validity, and Mergekit
 
 ## Downloads
 
-With the locked `huggingface-hub==0.36.0`, `hf-transfer` is a compatibility dependency and `boldt_posttrain` enables it (`HF_HUB_ENABLE_HF_TRANSFER=1`) whenever it is importable, so model and dataset
-pulls use HuggingFace's accelerated backend by default. Override by exporting the
-variable yourself before running. Hub 1.x removes this backend and uses `hf-xet`;
-that migration must update the lock and this initialization together.
+The locked `huggingface-hub==1.16.1` downloads models and datasets through `hf-xet`,
+its built-in accelerated backend. `hf-transfer` and `HF_HUB_ENABLE_HF_TRANSFER` are no
+longer used.
 
 ## Dry Plans
 

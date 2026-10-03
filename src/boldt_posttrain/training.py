@@ -213,6 +213,25 @@ def evaluation_interval(planned_optimizer_steps: int) -> int:
     return max(1, min(100, planned_optimizer_steps // 10 or 1))
 
 
+def warmup_steps_from_ratio(ratio: Any, max_steps: Optional[int] = None) -> float:
+    """Translate the experiment's ``warmup_ratio`` into Transformers 5 ``warmup_steps``.
+
+    Transformers 5 removed ``warmup_ratio``; ``warmup_steps`` is a ratio of the total
+    optimizer steps when it lies in ``[0, 1)`` and an absolute step count otherwise. This
+    keeps the Transformers 4 contract: the ratio must lie in ``[0, 1]`` (a ratio above one
+    must not silently become an absolute step count) and a ratio of exactly one warms up
+    over every planned step.
+    """
+    value = float(ratio)
+    if not 0.0 <= value <= 1.0:
+        raise ValueError("warmup_ratio must lie in range [0,1]")
+    if value < 1.0:
+        return value
+    if max_steps is not None and int(max_steps) > 0:
+        return int(max_steps)
+    raise ValueError("warmup_ratio=1.0 requires a positive max_steps")
+
+
 def validate_liger(enabled: bool, *, model_type: Optional[str] = None) -> None:
     if not enabled:
         return
@@ -324,7 +343,9 @@ base, adapter, revision, tied = sys.argv[1:]
 revision = revision or None
 from boldt_posttrain.training import load_tokenizer
 tokenizer = load_tokenizer(base, revision=revision)
-model = PeftModel.from_pretrained(AutoModelForCausalLM.from_pretrained(base, revision=revision), adapter)
+# Transformers 5 defaults from_pretrained to dtype="auto"; keep the 4.x float32 load.
+base_model = AutoModelForCausalLM.from_pretrained(base, revision=revision, dtype=torch.float32)
+model = PeftModel.from_pretrained(base_model, adapter)
 encoded = tokenizer('Kurzer Reload-Test', return_tensors='pt')
 with torch.inference_mode():
     logits = model(**encoded).logits
@@ -737,7 +758,8 @@ def _train_real(
             dataset=dataset,
             eval_dataset=eval_dataset,
             output_dir=trainer_dir,
-            training_args=common,
+            # Bound sequences by the model context, not TRL's 1024-token default.
+            training_args={**common, "max_length": int(training_cfg["context_length"])},
             preference_config=cfg.get("preference", {}),
             peft_config=peft_config,
             deadline=deadline,

@@ -32,6 +32,7 @@ from .policy import Policy, load_policy
 from .preference import _manifest_rows, train_preference_adapter
 from .resolver import OUTPUTS, resolve_model
 from .scoring import create_score, load_baseline
+from .seqkd import validate_seqkd_policy, verify_generation
 from .training import train_adapter
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -100,6 +101,40 @@ def _execute_lever(
             repository_root=repository_root,
             data_metadata=manifest,
         )
+    if lever == "seqkd":
+        settings = validate_seqkd_policy(config.document, policy)
+        generated, generation_card = verify_generation(
+            settings,
+            policy,
+            outputs_root=outputs_root,
+            repository_root=repository_root,
+        )
+        return train_adapter(
+            kind="sft",
+            model_source=policy.seed_model["repo_id"],
+            revision=policy.seed_model["revision"],
+            dataset=load_manifest_rows(generated, "sft", root=repository_root),
+            output_root=outputs_root / "checkpoints",
+            policy=policy,
+            experiment=training,
+            target_modules=training["target_modules"],
+            device="cuda:0",
+            qlora=training["method"] == "qlora",
+            allow_checkpoints=allow_checkpoints,
+            budget_minutes=budget,
+            repository_root=repository_root,
+            input_artifacts=[
+                ref for ref in generation_card["outputs"] if ref["role"] == "sft_shard"
+            ],
+            parent_run_ids=[generation_card["run_id"]],
+            lineage={
+                "seqkd_generation_run": generation_card["run_id"],
+                "teacher": generated["teacher"],
+                "prompt_source": generated["prompt_source"],
+            },
+            data_metadata=generated,
+            run_type="train_seqkd",
+        )
     if lever in ONLINE_LEVERS:
         validate_online_policy(config.document, policy)
         settings = config.document["distillation"]
@@ -154,11 +189,11 @@ def _execute_lever(
         return result["candidates"][0]
     raise LoopError(
         "loop experiment lever must produce one candidate: sft, cpt, preference, "
-        "distill/opd, grpo, rlvr, sdpo, sdft, or merge"
+        "distill/opd, grpo, rlvr, sdpo, sdft, seqkd, or merge"
     )
 
 
-_MANUAL_LEVERS = {"sft", "cpt", "preference", *ONLINE_LEVERS}
+_MANUAL_LEVERS = {"sft", "cpt", "preference", "seqkd", *ONLINE_LEVERS}
 
 
 def train_one_lever(
@@ -214,6 +249,8 @@ def train_one_lever(
             config.document["distillation"]["teacher_license"] = teacher_license
         if lever in ONLINE_LEVERS:
             validate_online_policy(config.document, policy)
+        if lever == "seqkd":
+            validate_seqkd_policy(config.document, policy)
         manifest = verify_data_manifest(
             outputs_root / "data", policy, repository_root=repository_root
         )

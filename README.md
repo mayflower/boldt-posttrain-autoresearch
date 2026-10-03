@@ -62,7 +62,7 @@ so the project hooks in `.claude/settings.json` are active.
 
 What `/pt-run N real` does per round: Claude Code captures the base Git ref once, writes its
 hypothesis and exactly one lever (`sft`, `cpt`, `preference`, `grpo`, `rlvr`, `opd`, `sdpo`,
-`sdft`, `distill` or `merge`) into `configs/posttrain/secure-current.json` (plus an optional
+`sdft`, `distill`, `seqkd` or `merge`) into `configs/posttrain/secure-current.json` (plus an optional
 `configs/posttrain/experiments/*.json` file and a note in `docs/experiments/`), and invokes:
 
 ```bash
@@ -166,11 +166,19 @@ uv run --locked python -m boldt_posttrain.cli train opd --real --allow-gpu --all
 uv run --locked python -m boldt_posttrain.cli train sdpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
 uv run --locked python -m boldt_posttrain.cli train sdft --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
 uv run --locked python -m boldt_posttrain.cli merge search --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli seqkd generate --real --allow-gpu --config configs/posttrain/experiments/seqkd-qwen3.8-27b-de.json
+uv run --locked python -m boldt_posttrain.cli train seqkd --real --allow-gpu --allow-checkpoints --config configs/posttrain/experiments/seqkd-qwen3.8-27b-de.json --budget-minutes 90
 ```
 
 Before running another lever, configure its data and parameters in the strict secure config.
 GRPO/RLVR need verified rows, SDPO needs feedback, SDFT needs demonstrations, and OPD needs
-a distinct, licensed teacher at an exact revision. `distill` aliases online OPD.
+a distinct, licensed teacher at an exact revision with the student's exact tokenizer.
+`distill` aliases online OPD. Because no larger model shares Boldt's tokenizer, an external
+teacher uses `seqkd` instead: `seqkd generate` lets a teacher from `policy.teachers`
+(currently Qwen3.8-27B-FP8) answer prompts from the verified SFT manifest, filters the answers
+through the same language, dedup and leakage gates as `data prepare`, and publishes them; the
+`seqkd` lever then SFT-trains the student on the generation run pinned in
+`seqkd.generation_run`. See `docs/preference-and-distillation.md`.
 Merge inputs must name exact, scored candidate run IDs in the config.
 
 One deterministic experiment round is the `loop run` command shown above for `/pt-run`.

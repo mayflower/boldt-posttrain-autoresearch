@@ -275,7 +275,7 @@ def make_rl_trainer(
 def make_opd_trainer(*, model, teacher, tokenizer, dataset, args, settings, journal, callbacks):
     """Use TRL's pinned on-policy sampler and GKD objective; add provenance only."""
     import torch
-    from trl import GKDTrainer
+    from trl.experimental.gkd import GKDTrainer
 
     def collate(rows):
         ids = [
@@ -308,8 +308,13 @@ def make_opd_trainer(*, model, teacher, tokenizer, dataset, args, settings, jour
                 lambda _model, _inputs, output: captured.update(logits=output.logits.detach())
             )
             try:
+                # The Trainer counts num_items_in_batch from the collated labels, which are all
+                # -100 before on-policy generation, so it is 0. TRL 1.x GKD divides the loss by
+                # it (inf/NaN); TRL 0.23 ignored it and averaged over the generated completion
+                # tokens. Passing None keeps that per-token mean; the Trainer's own gradient
+                # accumulation scaling still receives the original value, as before.
                 loss, output = super().compute_loss(
-                    model, inputs, return_outputs=True, num_items_in_batch=num_items_in_batch
+                    model, inputs, return_outputs=True, num_items_in_batch=None
                 )
                 if not torch.isfinite(loss).all():
                     raise RuntimeError("non-finite on-policy distillation loss")
@@ -419,7 +424,8 @@ def train_online_candidate(
     from datasets import Dataset
     from peft import LoraConfig, PeftModel, get_peft_model, get_peft_model_state_dict
     from transformers import TrainerCallback, TrainingArguments, set_seed
-    from trl import GKDConfig, GRPOConfig, RLOOConfig
+    from trl import GRPOConfig, RLOOConfig
+    from trl.experimental.gkd import GKDConfig
 
     from .secure_compat import provenance
     from .secure_compat.training import (
@@ -428,6 +434,7 @@ def train_online_candidate(
         validate_target_modules,
         validate_tokenizer,
     )
+    from .training import warmup_steps_from_ratio
 
     if not torch.cuda.is_available():
         raise RuntimeError("online candidate training requires CUDA; CPU fallback is forbidden")
@@ -530,7 +537,10 @@ def train_online_candidate(
             "max_steps": training["max_steps"],
             "num_train_epochs": training["num_train_epochs"],
             "learning_rate": training["learning_rate"],
-            "warmup_ratio": training["warmup_ratio"],
+            # Transformers 5 removed warmup_ratio; warmup_steps in [0, 1) is the same ratio.
+            "warmup_steps": warmup_steps_from_ratio(
+                training["warmup_ratio"], training["max_steps"]
+            ),
             "per_device_train_batch_size": settings["batch_size"],
             "gradient_accumulation_steps": training["gradient_accumulation_steps"],
             "gradient_checkpointing": training["gradient_checkpointing"],
@@ -558,7 +568,8 @@ def train_online_candidate(
                 **common,
                 "per_device_eval_batch_size": settings["batch_size"],
                 "num_generations": settings["num_generations"],
-                "max_prompt_length": settings["max_prompt_length"],
+                # TRL 1.x removed max_prompt_length and never truncates prompts; every
+                # prompt was already checked against it by _encode, which fails closed.
                 "max_completion_length": settings["max_completion_length"],
                 "temperature": settings["temperature"],
                 "beta": settings["beta"],

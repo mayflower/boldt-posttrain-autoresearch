@@ -75,7 +75,10 @@ def test_grpo_config_gets_effective_values_and_rslora_is_separate(tmp_path, tiny
     cfg = config(tiny_model_dir)
     args = make_grpo_config(cfg, tmp_path, device="cpu", has_validation=True)
     assert args.num_generations == 2
-    assert args.max_prompt_length == 32
+    # TRL 1.x GRPOConfig has no max_prompt_length; the prompt bound is enforced fail-closed
+    # by validate_verified_math_rows before training.
+    assert not hasattr(args, "max_prompt_length")
+    assert args.warmup_steps == 0.0
     assert args.max_completion_length == 16
     assert args.temperature == 1.0
     assert args.beta == 0.0

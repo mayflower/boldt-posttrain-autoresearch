@@ -175,10 +175,15 @@ class ExperimentConfig:
 
 def validate_config_dict(document: dict[str, Any]) -> list[str]:
     errors = _find_forbidden(document)
-    # Online objectives add experiment parameters, never policy overrides. Older
-    # SFT/CPT/preference experiments retain their exact schema and defaults.
+    # Online objectives and sequence-level distillation add experiment parameters,
+    # never policy overrides. Older SFT/CPT/preference experiments retain their exact
+    # schema and defaults.
     errors.extend(
-        _validate({k: v for k, v in document.items() if k != "online"}, _SCHEMA, "config")
+        _validate(
+            {k: v for k, v in document.items() if k not in {"online", "seqkd"}},
+            _SCHEMA,
+            "config",
+        )
     )
     experiment = document.get("experiment")
     lever = experiment.get("lever") if isinstance(experiment, dict) else None
@@ -195,6 +200,13 @@ def validate_config_dict(document: dict[str, Any]) -> list[str]:
         try:
             online_settings(document)
         except (ValueError, TypeError, KeyError) as exc:
+            errors.append(str(exc))
+    if "seqkd" in document or lever == "seqkd":
+        from ..seqkd import seqkd_settings
+
+        try:
+            seqkd_settings(document)
+        except (ValueError, TypeError) as exc:
             errors.append(str(exc))
     if document.get("schema_version") != 1:
         errors.append("config.schema_version must be 1")

@@ -128,6 +128,9 @@ def load_suite(
                     [{"role": "user", "content": str(case.get("prompt", ""))}],
                     tokenize=True,
                     add_generation_prompt=True,
+                    # Transformers 5 returns a BatchEncoding (len == number of keys) by
+                    # default; request the plain token-id list that len() must count.
+                    return_dict=False,
                 )
                 token_count = len(encoded)
             except (TypeError, ValueError, RuntimeError) as exc:
@@ -593,6 +596,7 @@ def run_real_evaluation(
 ) -> Dict[str, Any]:
     """Run real local generation plus the pinned lm-eval subprocess for one profile."""
     try:
+        import torch
         from transformers import AutoModelForCausalLM
     except ImportError as exc:
         raise RuntimeError("real evaluation requires transformers") from exc
@@ -620,7 +624,10 @@ def run_real_evaluation(
         template_overhead=int(eval_cfg.get("template_overhead", 0)),
         minimum_longcontext_tokens=int(eval_cfg.get("minimum_longcontext_tokens", 1024)),
     )
-    model = AutoModelForCausalLM.from_pretrained(load_ref, revision=training_cfg.get("revision"))
+    # Transformers 5 defaults from_pretrained to dtype="auto"; keep the 4.x float32 load.
+    model = AutoModelForCausalLM.from_pretrained(
+        load_ref, revision=training_cfg.get("revision"), dtype=torch.float32
+    )
     if adapter_ref is not None:
         try:
             from peft import PeftModel

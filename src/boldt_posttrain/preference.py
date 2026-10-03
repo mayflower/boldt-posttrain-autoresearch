@@ -245,7 +245,8 @@ def train_preference(
         raise ValueError(f"preference method must be one of {sorted(METHODS)}")
     try:
         from transformers import TrainingArguments
-        from trl import DPOConfig, DPOTrainer, KTOConfig, KTOTrainer, ORPOConfig, ORPOTrainer
+        from trl import DPOConfig, DPOTrainer, KTOConfig, KTOTrainer
+        from trl.experimental.orpo import ORPOConfig, ORPOTrainer
     except ImportError as exc:
         raise RuntimeError("preference training requires the train extra") from exc
     trainer_cls, config_cls = {
@@ -289,12 +290,22 @@ def train_preference(
         config_kwargs["beta"] = float(preference_config.get("beta", 0.1))
         config_kwargs["loss_type"] = [primary, "sft"] if sft_weight > 0 else [primary]
         config_kwargs["loss_weights"] = [1.0, sft_weight] if sft_weight > 0 else None
+    if method == "dpo":
+        # TRL 0.23 defaulted DPO to truncation_mode="keep_end"; TRL 1.x defaults to
+        # "keep_start" and then silently drops rows whose prompt fills max_length.
+        config_kwargs.setdefault("truncation_mode", "keep_end")
     if preference_config is not None:
-        config_kwargs["max_prompt_length"] = int(preference_config.get("max_prompt_length", 4096))
-        if method == "dpo":
-            config_kwargs["max_completion_length"] = int(
-                preference_config.get("max_completion_length", 2048)
-            )
+        # TRL 1.x removed max_prompt_length (and DPO's max_completion_length): only the whole
+        # sequence is bounded by max_length. Over-long prompts and completions are rejected
+        # before training by validate_preference_rows, so every accepted row fits in
+        # prompt + completion. That sum is the bound for all methods, capped by the caller's
+        # max_length (the model context). Without a caller bound the TRL default of 1024
+        # tokens would silently truncate rows the length gates accepted.
+        bound = int(preference_config.get("max_prompt_length", 4096)) + int(
+            preference_config.get("max_completion_length", 2048)
+        )
+        current = config_kwargs.get("max_length")
+        config_kwargs["max_length"] = bound if current is None else min(int(current), bound)
     args = config_cls(**config_kwargs)
     if not isinstance(args, TrainingArguments):
         raise RuntimeError("installed TRL preference config is incompatible")

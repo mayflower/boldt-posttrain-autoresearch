@@ -172,7 +172,17 @@ def train_preference_adapter(
         raise PreferenceError("checkpoint writes require explicit permission")
     if method not in {"dpo", "kto", "orpo"}:
         raise PreferenceError("method must be dpo, kto, or orpo")
+    rpo_alpha = float(preference["rpo_alpha"])
+    if rpo_alpha < 0:
+        raise PreferenceError("preference.rpo_alpha must be non-negative")
+    if method != "dpo" and rpo_alpha > 0:
+        raise PreferenceError(
+            "preference.rpo_alpha (RPO's chosen-answer NLL term) applies only to DPO; "
+            "set it to 0 for kto or orpo"
+        )
     from peft import LoraConfig
+
+    from ..training import warmup_steps_from_ratio
 
     model, tokenizer = create_model_and_tokenizer(
         model_source,
@@ -214,7 +224,8 @@ def train_preference_adapter(
         "learning_rate": training["learning_rate"],
         "num_train_epochs": training["num_train_epochs"],
         "max_steps": training["max_steps"],
-        "warmup_ratio": training["warmup_ratio"],
+        # Transformers 5 removed warmup_ratio; warmup_steps in [0, 1) is the same ratio.
+        "warmup_steps": warmup_steps_from_ratio(training["warmup_ratio"], training["max_steps"]),
         "logging_steps": 1,
         "save_strategy": "no",
         "report_to": "none",
@@ -230,7 +241,16 @@ def train_preference_adapter(
         "beta": preference["beta"],
     }
     if method == "dpo":
-        common["loss_type"] = [preference["loss_type"]]
+        # RPO: TRL 1.x expresses the former rpo_alpha as an extra "sft" loss (mean NLL of
+        # the chosen completion) weighted against the preference loss.
+        common["loss_type"] = (
+            [preference["loss_type"], "sft"] if rpo_alpha > 0 else [preference["loss_type"]]
+        )
+        if rpo_alpha > 0:
+            common["loss_weights"] = [1.0, rpo_alpha]
+        # TRL 0.23 defaulted DPO to truncation_mode="keep_end"; TRL 1.x defaults to
+        # "keep_start" and then silently drops rows whose prompt fills max_length.
+        common["truncation_mode"] = "keep_end"
     elif method == "orpo":
         common["max_completion_length"] = preference["max_completion_length"]
     args = config_class(**common)

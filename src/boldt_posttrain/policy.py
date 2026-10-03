@@ -67,6 +67,10 @@ class Policy:
     def integrity(self) -> dict[str, Any]:
         return self.document["integrity"]
 
+    @property
+    def teachers(self) -> list[dict[str, Any]]:
+        return self.document["teachers"]
+
     def to_dict(self) -> dict[str, Any]:
         return self.document
 
@@ -81,6 +85,7 @@ def validate_policy(document: dict[str, Any]) -> None:
         "scoring",
         "training",
         "merge",
+        "teachers",
         "integrity",
     }
     _require_keys(document, top, "policy")
@@ -258,6 +263,7 @@ def validate_policy(document: dict[str, Any]) -> None:
         {"bos_token", "eos_token", "pad_token"},
         "policy.seed_model.special_tokens",
     )
+    _validate_teachers(document)
     for location in (
         document["data"]["allowed_organizations"],
         document["data"]["allowed_licenses"],
@@ -271,6 +277,43 @@ def validate_policy(document: dict[str, Any]) -> None:
     ):
         if not isinstance(location, list) or not all(isinstance(item, str) for item in location):
             raise PolicyError("policy string-list field has an invalid value")
+
+
+TEACHER_PURPOSES = {"seqkd"}
+
+
+def _validate_teachers(document: dict[str, Any]) -> None:
+    """External teachers are exact, licensed, human-approved Hub commits.
+
+    A teacher is never inferred from an experiment file: an experiment may only
+    name one of these entries, so the license and revision are fixed by the
+    policy owner, not by the agent.
+    """
+    teachers = document["teachers"]
+    if not isinstance(teachers, list):
+        raise PolicyError("policy.teachers must be an array")
+    seen: set[tuple[str, str]] = set()
+    for index, entry in enumerate(teachers):
+        location = f"policy.teachers[{index}]"
+        if not isinstance(entry, dict):
+            raise PolicyError(f"{location} must be an object")
+        _require_keys(entry, {"repo_id", "revision", "license", "purpose"}, location)
+        if not all(isinstance(entry[key], str) for key in entry):
+            raise PolicyError(f"{location} fields must be strings")
+        if entry["repo_id"].count("/") != 1:
+            raise PolicyError(f"{location}.repo_id must be an organization/name Hub id")
+        if not HUB_REVISION_RE.fullmatch(entry["revision"]):
+            raise PolicyError(f"{location}.revision must be an exact 40-character commit SHA")
+        if entry["license"] not in document["data"]["allowed_licenses"]:
+            raise PolicyError(f"{location}.license is not in policy.data.allowed_licenses")
+        if entry["purpose"] not in TEACHER_PURPOSES:
+            raise PolicyError(f"{location}.purpose must be one of {sorted(TEACHER_PURPOSES)}")
+        if entry["repo_id"] == document["seed_model"]["repo_id"]:
+            raise PolicyError(f"{location} must differ from the student seed model")
+        key = (entry["repo_id"], entry["revision"])
+        if key in seen:
+            raise PolicyError(f"{location} duplicates another teacher entry")
+        seen.add(key)
 
 
 def load_policy(path: str | Path = DEFAULT_POLICY) -> Policy:

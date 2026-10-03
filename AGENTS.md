@@ -40,7 +40,7 @@ pointers, source code, or runtime artifacts during autonomous research.
 ## The loop
 
 One outer round records exactly one candidate-producing lever (`sft`, `cpt`,
-`preference`, `grpo`, `rlvr`, `opd`, `sdpo`, `sdft`, `distill`, or `merge`) and invokes the loop, which trains, resolves the
+`preference`, `grpo`, `rlvr`, `opd`, `sdpo`, `sdft`, `distill`, `seqkd`, or `merge`) and invokes the loop, which trains, resolves the
 candidate, evaluates it, scores it against the immutable baseline, and — only if the
 gates pass — promotes it. Capture the base ref once before all rounds:
 
@@ -59,6 +59,14 @@ Prerequisites (produce the secure data manifest and the immutable baseline once)
 ```bash
 uv run --locked python -m boldt_posttrain.cli data prepare --real --config configs/posttrain/secure-current.json
 uv run --locked python -m boldt_posttrain.cli baseline run --real --allow-gpu --config configs/posttrain/secure-current.json
+```
+
+Sequence-level distillation (`seqkd`) needs one teacher generation run before its rounds.
+The teacher must be an exact entry in `policy.teachers`; the generation runs outside the
+loop budget and its returned run ID is pinned as `seqkd.generation_run` in the experiment:
+
+```bash
+uv run --locked python -m boldt_posttrain.cli seqkd generate --real --allow-gpu --config configs/posttrain/experiments/seqkd-qwen3.8-27b-de.json
 ```
 
 Individual levers and inspection:
