@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from boldt_posttrain.cli import build_parser, main
 
@@ -157,10 +158,40 @@ def test_eval_candidate_forwards_verified_checkpoint_and_revision(
 
     monkeypatch.setattr(runtime.evaluation, "_publish_evaluation", fake_publish)
     monkeypatch.setattr(cli, "OUTPUTS", tmp_path / "outputs")
+    # Hermetic: CI runners have no GPU; the CUDA gate itself is covered below.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     assert main(["eval", "run", "--real", "--allow-gpu", "--candidate", "candidate-id"]) == 0
     assert captured["resolved"].artifact["path"] == str(checkpoint)
     assert captured["resolved"].base_model["revision"] == "a" * 40
     assert captured["output_root"] == tmp_path / "outputs/evals"
+
+
+def test_eval_real_without_cuda_fails_before_publishing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    import boldt_posttrain.cli as cli
+
+    import boldt_posttrain.runtime_cli as runtime
+
+    monkeypatch.setattr(
+        runtime,
+        "resolve_model",
+        lambda **_kwargs: SimpleNamespace(
+            artifact={"path": str(tmp_path / "adapter")},
+            base_model={"repo_id": "org/model", "revision": "a" * 40},
+        ),
+    )
+
+    def unexpected_publish(**_kwargs):
+        raise AssertionError("evaluation must not start without CUDA")
+
+    monkeypatch.setattr(runtime.evaluation, "_publish_evaluation", unexpected_publish)
+    monkeypatch.setattr(cli, "OUTPUTS", tmp_path / "outputs")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert main(["eval", "run", "--real", "--allow-gpu", "--candidate", "candidate-id"]) == 3
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert "real evaluation requires CUDA" in result["error"]
 
 
 def test_loop_run_uses_protected_experiment_api(tmp_path: Path, monkeypatch, capsys):
