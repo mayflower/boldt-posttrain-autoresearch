@@ -246,3 +246,20 @@ def test_console_entrypoints_do_not_discard_process_arguments(monkeypatch, entry
     monkeypatch.setattr(cli, "main", lambda args: seen.extend(args) or 2)
     assert getattr(cli, entrypoint)() == 2
     assert seen == [command, "--invalid-option"]
+
+
+def test_integrity_check_consumes_the_subcommand_and_preserves_failure(monkeypatch):
+    import boldt_posttrain.cli as cli
+
+    seen = {}
+
+    def script(stem, argv):
+        seen.update(stem=stem, argv=argv)
+        return 1
+
+    monkeypatch.setattr(cli, "_script", script)
+    assert main(["integrity", "check", "--base-ref", "a" * 40, "--strict"]) == 1
+    assert seen == {
+        "stem": "check_posttrain_integrity",
+        "argv": ["--base-ref", "a" * 40, "--format", "json", "--strict"],
+    }

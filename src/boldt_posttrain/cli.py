@@ -309,7 +309,14 @@ def main_report(argv=None):
 
 
 def main_integrity(argv: Optional[Sequence[str]] = None) -> int:
-    return _script("check_posttrain_integrity", list(sys.argv[1:] if argv is None else argv))
+    return main(["integrity", "check", *(sys.argv[1:] if argv is None else argv)])
+
+
+def _integrity_command(args):
+    argv = ["--base-ref", args.base_ref, "--format", "json"]
+    if args.strict:
+        argv.append("--strict")
+    return _script("check_posttrain_integrity", argv)
 
 
 def _status_command(_args):
@@ -1209,11 +1216,12 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("status", "report"):
         command = commands.add_parser(name)
         command.set_defaults(handler=_status_command)
-    integrity = commands.add_parser("integrity", add_help=False)
-    integrity.set_defaults(
-        handler=lambda args: _script("check_posttrain_integrity", args.remainder)
-    )
-    integrity.add_argument("remainder", nargs=argparse.REMAINDER)
+    integrity = commands.add_parser("integrity")
+    integrity_sub = integrity.add_subparsers(dest="action", required=True)
+    integrity_check = integrity_sub.add_parser("check")
+    integrity_check.add_argument("--base-ref", required=True)
+    integrity_check.add_argument("--strict", action="store_true")
+    integrity_check.set_defaults(handler=_integrity_command)
     loop = commands.add_parser("loop")
     loop_sub = loop.add_subparsers(dest="action", required=True, parser_class=GatedParser)
     loop_run = loop_sub.add_parser("run")
