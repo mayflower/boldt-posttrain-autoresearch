@@ -32,6 +32,107 @@ not replace the lock.
 With the default order `FASTEST_FIRST`, device `0` on the reference host is the 48-GB
 NVIDIA RTX A6000.
 
+## How it is used: Claude Code drives, Python executes
+
+The research loop runs inside a Claude Code session started in this repository. Nothing in the
+code calls an LLM; the agent is the researcher, the CLI is the lab:
+
+| Who | Does |
+| --- | --- |
+| Human | Owns `configs/posttrain/policy.json`, starts the session, authorizes GPU work by invoking the `/pt-*` commands. |
+| Claude Code | Reads the contract, forms one hypothesis per round, records it as one lever in the strict experiment files, runs the loop, reads the verdict, decides the next round or stops. |
+| `boldt_posttrain.cli` | Trains, resolves the candidate, evaluates, scores against the immutable baseline, and promotes only if every gate passes. Enforces the policy regardless of what the agent asks. |
+
+### Start a session
+
+```bash
+cd boldt-posttrain-autoresearch
+claude
+```
+
+On start, `CLAUDE.md` loads the agent contract `AGENTS.md`, and a session hook prints a short
+orientation with the next steps. On the first start in a new checkout, accept the trust prompt
+so the project hooks in `.claude/settings.json` are active.
+
+### A typical session
+
+```text
+/pt-orient          validate the policy, show verified status, name the next exact command (read-only)
+/pt-data dry        plan data discovery and preparation; then /pt-data real (once)
+/pt-baseline real   create the immutable seed baseline (once, GPU)
+/pt-run 3 real      let the agent run up to 3 serial research rounds
+/pt-status          verified status, frontier and report
+```
+
+What `/pt-run N real` does per round: Claude Code captures the base Git ref once, writes its
+hypothesis and exactly one lever (`sft`, `cpt`, `preference`, `grpo`, `rlvr`, `opd`, `sdpo`,
+`sdft`, `distill` or `merge`) into `configs/posttrain/secure-current.json` (plus an optional
+`configs/posttrain/experiments/*.json` file and a note in `docs/experiments/`), and invokes:
+
+```bash
+uv run --locked python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --base-ref "$BASE_REF" --budget-minutes 90 --promote
+```
+
+It then reads the verdict and starts the next round. It stops after N rounds, on any technical or
+integrity failure (nonzero exit), or after two consecutive rounds without a passing improvement.
+
+Further commands for single steps:
+
+| Command | Purpose |
+| --- | --- |
+| `/pt-train dry\|real sft\|cpt\|preference` | one training job |
+| `/pt-rlvr` | RLOO online RL with mechanical rewards |
+| `/pt-eval dry\|real <run-id>` | evaluate one exact candidate |
+| `/pt-trial dry\|real <run-id>` | evaluate and score one exact candidate |
+| `/pt-merge dry\|real` | merge search over scored candidates |
+| `/pt-search <search-config.json>` | serial Successive Halving search |
+| `/pt-failures <dev-eval-run-id>` | failure statistics from a development evaluation |
+| `/pt-integrity --base-ref REF` | default-deny integrity gate |
+| `/pt-promote <run-id> <base-ref>` | promote one verified candidate |
+
+The `/pt-*` commands are human-invoked only (`disable-model-invocation`): Claude cannot trigger
+them itself. Each command pre-authorizes exactly the CLI calls it needs. A CLI call Claude makes
+directly through Bash is allowed by the guard but still goes through the normal permission prompt,
+so do not bypass permissions if you want to approve real runs yourself. Slash commands also work non-interactively, for
+example `claude -p "/pt-orient"`. Long `/pt-run` sessions are best kept in an interactive
+session (e.g. inside `tmux`) so the verdicts stay visible.
+
+### What the agent can and cannot do
+
+A PreToolUse hook (`.claude/hooks/guard_posttrain.py`) enforces the trust boundary for the
+`Bash`, `Edit`, `Write`, `Read`, `Glob` and `Grep` tools:
+
+- Writes only to `configs/posttrain/secure-current.json`, `configs/posttrain/experiments/*.json`
+  and `docs/experiments/*.md`. Policy, scorer, evaluation data, source code, baselines and
+  runtime artifacts are blocked.
+- Shell only for `uv run --locked python -m boldt_posttrain.cli …`, `uv run --locked git rev-parse
+  HEAD`, `uv run --locked git status --short` and `uv run --locked git diff -- …`, each as a single
+  command: no `&&`, `;`, pipes, redirections or substitutions.
+- Read, Glob and Grep are unrestricted.
+
+A blocked call is denied with the reason, and Claude adapts. Expect to see this when the agent
+first tries a chained shell command. Tools outside that list (for example `NotebookEdit` or MCP
+tools) are not covered by the hook; keep them unapproved during research sessions.
+
+### Working on this repository with Claude Code
+
+The guard also blocks ordinary development (editing `src/`, tests, docs). To work on the code
+itself, disable the hooks locally with `.claude/settings.local.json`:
+
+```json
+{ "disableAllHooks": true }
+```
+
+Delete the file before any research session. It is not ignored by Git, so `git status` shows it,
+but the integrity gate does not check `.claude/`; a forgotten override silently removes the
+trust boundary.
+
+### Other agents and manual use
+
+Codex and other agents read `AGENTS.md` directly and run the same `uv run --locked …` commands.
+They are not covered by the Claude Code hook; the CLI's own policy, integrity and promotion gates
+still apply. The commands below also work by hand without any agent.
+
 ## Modes
 
 Every mutating operation requires exactly one of `--dry-run` or `--real`. Data, evaluation and merge plans are written under `outputs/posttrain/plans/`;
@@ -40,7 +141,7 @@ training dry runs validate prerequisites without producing candidates. Training 
 `--allow-checkpoints` and uses `--allow-gpu` for its configured GPU path. No command falls back to
 CPU, another model, another trainer, or a smaller benchmark.
 
-## Workflow
+## Manual CLI Workflow
 
 ```bash
 uv run --locked python -m boldt_posttrain.cli data discover --real --config configs/posttrain/secure-current.json
