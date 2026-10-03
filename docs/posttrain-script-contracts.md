@@ -1,13 +1,16 @@
-# Post-Training CLI Contracts
+# Post-training CLI contracts
 
-All `scripts/pt_*.py` files are thin compatibility entrypoints for
-`uv run --locked python -m boldt_posttrain.cli`. Fachlogik exists only in `src/boldt_posttrain/`.
+Use `uv run --locked python -m boldt_posttrain.cli`. The compatibility scripts for
+data discovery/preparation, baseline, evaluation, score, promotion, merge, loop,
+status/report and distillation delegate directly to these verbs. `pt_log_result`
+is a separate historical TSV utility and does not participate in the trust chain.
 
-Every CLI emits exactly one JSON object on stdout, detailed logs on stderr, and one of exit codes
-0–5 documented in `README.md`. Subprocesses use argument arrays without a shell. Mutating commands
-require exactly one explicit mode; dry plans cannot write any real namespace.
-
-## Commands
+Canonical commands emit a JSON result and preserve nonzero statuses. Trainer and
+third-party subprocess output may include progress logs; stdout is not guaranteed
+to contain only one JSON object during real ML execution. Candidate-producing
+commands require explicit `--dry-run` or `--real`; real training/merge additionally
+require `--allow-gpu --allow-checkpoints`. Unsupported flags fail at parsing rather
+than being silently ignored. Exit codes 0–5 are documented in `README.md`.
 
 ```bash
 uv run --locked python -m boldt_posttrain.cli policy validate
@@ -19,10 +22,11 @@ uv run --locked python -m boldt_posttrain.cli status
 uv run --locked python -m boldt_posttrain.cli report
 ```
 
-Data runs publish immutable discovery or prepared-data directories. Training publishes a verified
-PEFT adapter only after save/reload/forward validation. Evaluation publishes summary, raw
-generations, exact resolved-model JSON, lm-eval output, and a run card. Score and promotion accept
-only those linked artifacts. Merge materializes PEFT inputs and delegates all full-weight merges
-to the pinned Mergekit CLI.
+Canonical commands consume strict secure configs and publish schema-v1,
+event-chained artifacts. Score accepts an exact evaluation run ID; promotion an
+exact candidate run ID and base ref. Baseline, score, merge and promotion verify
+their linked inputs. Run-card fields and roles live in `artifacts.py`.
 
-Run-card schema v1 fields and artifact roles are defined in `src/boldt_posttrain/artifacts.py`.
+Recipe-only bootstrap, synthesis, search, mix and comparison utilities retain
+the earlier config and artifact formats. Their results are not canonical training
+candidates. See `architecture-consolidation.md` for remaining dependencies.

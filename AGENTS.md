@@ -40,13 +40,13 @@ pointers, source code, or runtime artifacts during autonomous research.
 ## The loop
 
 One outer round records exactly one candidate-producing lever (`sft`, `cpt`,
-`preference`, `distill`, or `merge`) and invokes the loop, which trains, resolves the
+`preference`, `grpo`, `rlvr`, `opd`, `sdpo`, `sdft`, `distill`, or `merge`) and invokes the loop, which trains, resolves the
 candidate, evaluates it, scores it against the immutable baseline, and — only if the
 gates pass — promotes it. Capture the base ref once before all rounds:
 
 ```bash
-BASE_REF=$(git rev-parse HEAD)
-uv run --locked python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --base-ref "$BASE_REF" --budget-minutes 90
+BASE_REF=$(uv run --locked git rev-parse HEAD)
+uv run --locked python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --base-ref "$BASE_REF" --budget-minutes 90 --promote
 ```
 
 Python executes the recorded experiment deterministically; hypothesis selection

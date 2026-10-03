@@ -1,23 +1,11 @@
-import importlib.util
 import json
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
-from boldt_posttrain.evaluation import finalize_summary
-from boldt_posttrain.frontier import update_specialist_frontiers
 from boldt_posttrain.merge import build_candidates, mergekit_config, run_merge_round
 from boldt_posttrain.training import make_peft_config
-
-
-def _merge_script():
-    path = Path(__file__).resolve().parents[1] / "scripts/pt_merge_search.py"
-    spec = importlib.util.spec_from_file_location("pt_merge_search_test", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def test_multiple_merge_candidates_choose_one_full_eval():
@@ -41,49 +29,6 @@ def test_multiple_merge_candidates_choose_one_full_eval():
     assert result["status"] == "ok"
     assert len(candidates) == 5
     assert len(dev_calls) == 1
-
-
-def test_verified_specialist_frontiers_feed_merge_matrix(tmp_path):
-    summary = finalize_summary(
-        {
-            "run_id": "reasoning-run",
-            "model": str(tmp_path / "adapter"),
-            "mode": "real",
-            "status": "ok",
-            "technical_error_count": 0,
-            "hard_gates": {"language": True, "safety": True, "format": True},
-            "metrics": {
-                "reasoning_core": 0.9,
-                "leakage": {"status": "clean", "hits": 0},
-                "license": {"usable": True},
-            },
-        }
-    )
-    frontier = update_specialist_frontiers([summary])
-    path = tmp_path / "frontier.json"
-    path.write_text(json.dumps(frontier), encoding="utf-8")
-    eligible = _merge_script()._frontier_eligible(path, "seed")
-    assert eligible == [
-        {
-            "run_id": "reasoning-run",
-            "base_model": "seed",
-            "run_type": "verified_specialist_frontier",
-            "checkpoint": str(tmp_path / "adapter"),
-            "frontier": "reasoning",
-        }
-    ]
-    matrix = _merge_script().build_matrix(
-        eligible
-        + [
-            {
-                "run_id": "format-run",
-                "base_model": "seed",
-                "checkpoint": str(tmp_path / "format-adapter"),
-            }
-        ],
-        ["linear"],
-    )
-    assert matrix[0]["run_id"] == "reasoning-run+format-run::linear"
 
 
 def test_all_merge_configs_validate_against_locked_mergekit():

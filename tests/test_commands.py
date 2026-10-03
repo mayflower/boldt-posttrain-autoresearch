@@ -26,7 +26,7 @@ def test_commands_have_no_error_swallowing_or_latest_alias():
 
 def test_autonomous_command_has_narrow_write_surface():
     document = commands()["pt-run.md"]
-    assert "Edit(configs/posttrain/current.json)" in document
+    assert "Edit(configs/posttrain/secure-current.json)" in document
     assert "Edit(configs/posttrain/experiments/*.json)" in document
     for forbidden in ("Edit(src/", "Write(outputs/", "sed -i", "python -c", "tee "):
         assert forbidden not in document
@@ -46,7 +46,10 @@ def test_pretool_guard_denies_write_and_shell_bypass():
     )
     assert (
         module.allowed(
-            {"tool_name": "Edit", "tool_input": {"file_path": "configs/posttrain/current.json"}}
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": "configs/posttrain/secure-current.json"},
+            }
         )[0]
         is True
     )
@@ -65,3 +68,29 @@ def test_pretool_guard_denies_write_and_shell_bypass():
         is False
     )
     json.loads((ROOT / ".claude/settings.json").read_text())
+
+
+def test_guard_accepts_documented_absolute_paths_and_notes_but_rejects_escapes():
+    path = ROOT / ".claude/hooks/guard_posttrain.py"
+    spec = importlib.util.spec_from_file_location("guard", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for allowed in (
+        ROOT / "configs/posttrain/secure-current.json",
+        ROOT / "docs/experiments/trial.md",
+    ):
+        assert module.allowed({"tool_name": "Write", "tool_input": {"file_path": str(allowed)}})[0]
+    for denied in (
+        "configs/posttrain/policy.json",
+        "docs/experiments/../../policy.md",
+        "/tmp/trial.json",
+    ):
+        assert not module.allowed({"tool_name": "Write", "tool_input": {"file_path": denied}})[0]
+    assert not module.allowed(
+        {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "uv run --locked python -m boldt_posttrain.cli status\nrm file"
+            },
+        }
+    )[0]

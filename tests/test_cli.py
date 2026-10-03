@@ -137,11 +137,13 @@ def test_eval_candidate_forwards_verified_checkpoint_and_revision(
 ):
     import boldt_posttrain.cli as cli
 
+    import boldt_posttrain.runtime_cli as runtime
+
     checkpoint = tmp_path / "adapter"
     captured = {}
 
     monkeypatch.setattr(
-        cli,
+        runtime,
         "resolve_model",
         lambda **_kwargs: SimpleNamespace(
             artifact={"path": str(checkpoint)},
@@ -149,15 +151,16 @@ def test_eval_candidate_forwards_verified_checkpoint_and_revision(
         ),
     )
 
-    def fake_script(stem, argv):
-        captured.update(stem=stem, argv=argv)
-        return 0
+    def fake_publish(**kwargs):
+        captured.update(kwargs)
+        return {"status": "succeeded"}
 
-    monkeypatch.setattr(cli, "_script", fake_script)
+    monkeypatch.setattr(runtime.evaluation, "_publish_evaluation", fake_publish)
+    monkeypatch.setattr(cli, "OUTPUTS", tmp_path / "outputs")
     assert main(["eval", "run", "--real", "--allow-gpu", "--candidate", "candidate-id"]) == 0
-    assert captured["stem"] == "pt_eval"
-    assert captured["argv"][captured["argv"].index("--model") + 1] == str(checkpoint)
-    assert captured["argv"][captured["argv"].index("--revision") + 1] == "a" * 40
+    assert captured["resolved"].artifact["path"] == str(checkpoint)
+    assert captured["resolved"].base_model["revision"] == "a" * 40
+    assert captured["output_root"] == tmp_path / "outputs/evals"
 
 
 def test_loop_run_uses_protected_experiment_api(tmp_path: Path, monkeypatch, capsys):
@@ -215,17 +218,31 @@ def test_promote_uses_protected_frontier_api(tmp_path: Path, monkeypatch, capsys
 
 
 def test_real_merge_requires_and_forwards_checkpoint_permission(monkeypatch, capsys):
-    import boldt_posttrain.cli as cli
+    import boldt_posttrain.runtime_cli as runtime
 
     captured = {}
 
-    def fake_forward(*args):
-        captured["args"] = args
-        return 0
+    def fake_search(**kwargs):
+        captured.update(kwargs)
+        return {"status": "succeeded"}
 
-    monkeypatch.setattr(cli, "_forward", fake_forward)
+    monkeypatch.setattr(runtime.merge, "run_search", fake_search)
     base = ["merge", "search", "--real", "--allow-gpu"]
     assert main(base) == 2
     assert "allow-checkpoints" in json.loads(capsys.readouterr().out)["error"]
     assert main([*base, "--allow-checkpoints"]) == 0
-    assert "allow_checkpoints" in captured["args"][3]
+    assert captured["allow_checkpoints"] is True
+    assert captured["allow_gpu"] is True
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "command"), [("main_status", "status"), ("main_report", "report")]
+)
+def test_console_entrypoints_do_not_discard_process_arguments(monkeypatch, entrypoint, command):
+    import boldt_posttrain.cli as cli
+
+    seen = []
+    monkeypatch.setattr(cli.sys, "argv", [command, "--invalid-option"])
+    monkeypatch.setattr(cli, "main", lambda args: seen.extend(args) or 2)
+    assert getattr(cli, entrypoint)() == 2
+    assert seen == [command, "--invalid-option"]

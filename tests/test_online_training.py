@@ -184,6 +184,37 @@ def test_every_online_lever_dispatches_one_secure_candidate_with_same_deadline(
     assert calls[0]["teacher_ref"] == ("resolved-teacher" if lever in {"opd", "distill"} else None)
 
 
+def test_opd_rejects_the_unchanged_student_seed_before_loading_a_trainer(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    policy = load_policy()
+    monkeypatch.setattr(
+        loop,
+        "resolve_model",
+        lambda **kwargs: SimpleNamespace(
+            kind="hub_model",
+            base_model={key: policy.seed_model[key] for key in ("repo_id", "revision")},
+        ),
+    )
+    monkeypatch.setattr(
+        loop, "_teacher_license", lambda *args: pytest.fail("must reject before Hub lookup")
+    )
+    monkeypatch.setattr(
+        loop, "train_online_candidate", lambda **kwargs: pytest.fail("must not train")
+    )
+    with pytest.raises(loop.LoopError, match="distinct teacher"):
+        loop._execute_lever(
+            ExperimentConfig(tmp_path / "config.json", config("opd")),
+            policy,
+            {"shards": []},
+            deadline=time.monotonic() + 90,
+            outputs_root=tmp_path / "outputs",
+            repository_root=tmp_path,
+            allow_gpu=True,
+            allow_checkpoints=True,
+        )
+
+
 @pytest.mark.parametrize("verb", ["grpo", "rlvr", "opd", "sdpo", "sdft", "distill"])
 def test_manual_online_verbs_use_the_secure_producer(verb):
     args = cli.build_parser().parse_args(

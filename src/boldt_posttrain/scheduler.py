@@ -113,16 +113,9 @@ def run_successive_halving(
         results = []
         for trial in active:  # deliberately serial: no worker pool and no background futures
             parent = previous.get(trial["trial_id"])
-            try:
-                result = dict(train_and_proxy(trial, rung, parent))
-            except Exception as exc:
-                if type(exc).__name__.lower().startswith("integrity"):
-                    raise
-                result = {
-                    "status": "failed",
-                    "technical_error_count": 1,
-                    "technical_error": f"{type(exc).__name__}: {exc}",
-                }
+            result = dict(train_and_proxy(trial, rung, parent))
+            if int(result.get("technical_error_count", 0)) or result.get("status") == "failed":
+                raise RuntimeError(f"search trial {trial['trial_id']} failed technically: {result}")
             result.update(
                 {
                     "trial_id": trial["trial_id"],

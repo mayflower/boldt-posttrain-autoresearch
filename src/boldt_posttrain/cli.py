@@ -32,8 +32,6 @@ from .data_pipeline import (
 from .secure_compat.data_pipeline import verify_data_manifest
 from .evaluation import (
     finalize_summary,
-    load_suite,
-    register_promotion_suite,
     resolve_suite,
     run_real_evaluation,
 )
@@ -89,22 +87,6 @@ def _script(stem: str, argv: Sequence[str]) -> int:
     return int(_load(stem).main(list(argv)))
 
 
-def _forward(
-    args: argparse.Namespace, stem: str, fields: Sequence[str], flags: Sequence[str]
-) -> int:
-    argv = []
-    for field in fields:
-        value = getattr(args, field, None)
-        if value is not None:
-            if field == "config" and not Path(str(value)).is_absolute():
-                value = ROOT / str(value)
-            argv.extend(["--" + field.replace("_", "-"), str(value)])
-    for flag in flags:
-        if getattr(args, flag, False):
-            argv.append("--" + flag.replace("_", "-"))
-    return _script(stem, argv)
-
-
 def _plan(operation: str, config: str | Path | None = None) -> dict[str, Any]:
     plan_id = new_run_id("plan")
     path = OUTPUTS / "plans" / plan_id / "plan.json"
@@ -118,119 +100,34 @@ def _plan(operation: str, config: str | Path | None = None) -> dict[str, Any]:
     return {"status": "succeeded", "mode": "dry_run", "plan": str(path)}
 
 
-def _eval_run_command(args: argparse.Namespace) -> int:
-    try:
-        resolved = resolve_model(
-            policy=load_policy(),
-            candidate=args.candidate,
-            model=args.model,
-            outputs_root=OUTPUTS,
-            external_roots=tuple(Path(item) for item in args.external_root),
-        )
-        if resolved.artifact is not None:
-            model_path = Path(resolved.artifact["path"])
-            args.model = str(model_path if model_path.is_absolute() else ROOT / model_path)
-        else:
-            args.model = resolved.base_model["repo_id"]
-        args.revision = resolved.base_model["revision"]
-    except Exception as exc:
-        print(json.dumps({"status": "failed", "error": str(exc)}))
-        return 3
-    return _forward(
-        args,
-        "pt_eval",
-        (
-            "config",
-            "model",
-            "candidate",
-            "label",
-            "out",
-            "device",
-            "profile",
-            "suite",
-            "budget_minutes",
-            "revision",
-        ),
-        ("real", "dry_run", "allow_gpu"),
-    )
+def _eval_run_command(args):
+    from .runtime_cli import evaluate
+
+    return evaluate(args, root=ROOT, outputs=OUTPUTS, plan=_plan)
 
 
-def _baseline_run_command(args: argparse.Namespace) -> int:
-    return _forward(
-        args,
-        "pt_baseline",
-        (
-            "config",
-            "out",
-            "model",
-            "label",
-            "device",
-            "profile",
-            "suite",
-            "budget_minutes",
-        ),
-        ("real", "dry_run", "allow_gpu"),
-    )
+def _baseline_run_command(args):
+    from .runtime_cli import evaluate
+
+    return evaluate(args, root=ROOT, outputs=OUTPUTS, plan=_plan, baseline=True)
 
 
-def _score_command(args: argparse.Namespace) -> int:
-    if args.out is None:
-        label = args.candidate or (Path(args.run).stem if args.run else "score")
-        args.out = str(ROOT / "outputs/posttrain/scores" / f"{label}.json")
-    return _forward(
-        args,
-        "pt_score",
-        (
-            "config",
-            "run",
-            "candidate",
-            "baseline",
-            "out",
-            "profile",
-            "format",
-        ),
-        (),
-    )
+def _score_command(args):
+    from .runtime_cli import score
+
+    return score(args, root=ROOT, outputs=OUTPUTS)
 
 
-def _data_prepare_command(args: argparse.Namespace) -> int:
-    return _forward(
-        args,
-        "pt_prepare_openeurollm_de",
-        (
-            "config",
-            "discovery",
-            "selection",
-            "discovery_run_id",
-            "selection_run_id",
-            "out",
-            "format",
-        ),
-        ("real", "dry_run"),
-    )
+def _data_prepare_command(args):
+    from .runtime_cli import data
+
+    return data(args, root=ROOT, outputs=OUTPUTS, plan=_plan)
 
 
-def _data_discover_command(args: argparse.Namespace) -> int:
-    if args.dry_run:
-        try:
-            config_path = Path(args.config)
-            if not config_path.is_absolute():
-                config_path = ROOT / config_path
-            cfg = cfgmod.resolve_config(config_path)
-            errors = cfgmod.validate_config_dict(cfg)
-            if errors:
-                raise ValueError("; ".join(errors))
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            print(json.dumps({"status": "failed", "error": str(exc), "exit_code": 2}))
-            return 2
-        print(json.dumps(_plan("data-discover", config_path)))
-        return 0
-    return _forward(
-        args,
-        "pt_discover_openeurollm_de",
-        ("config", "out", "format"),
-        ("real", "dry_run"),
-    )
+def _data_discover_command(args):
+    from .runtime_cli import data
+
+    return data(args, root=ROOT, outputs=OUTPUTS, plan=_plan)
 
 
 def _train_command(args: argparse.Namespace) -> int:
@@ -276,6 +173,7 @@ def _train_command(args: argparse.Namespace) -> int:
         allow_gpu=args.allow_gpu,
         allow_checkpoints=args.allow_checkpoints,
         specialist=getattr(args, "specialist", None),
+        preference_method=getattr(args, "method", None),
         teacher=getattr(args, "teacher", None),
         teacher_license=getattr(args, "teacher_license", None),
     )
@@ -283,16 +181,10 @@ def _train_command(args: argparse.Namespace) -> int:
     return code
 
 
-def _merge_command(args: argparse.Namespace) -> int:
-    if args.real and not args.allow_checkpoints:
-        print(json.dumps({"status": "failed", "error": "--real requires --allow-checkpoints"}))
-        return 2
-    return _forward(
-        args,
-        "pt_merge_search",
-        ("config", "runs", "frontier", "out", "format", "merge_device", "device", "budget_minutes"),
-        ("real", "dry_run", "allow_gpu", "allow_checkpoints"),
-    )
+def _merge_command(args):
+    from .runtime_cli import merge_candidates
+
+    return merge_candidates(args, root=ROOT, outputs=OUTPUTS, plan=_plan)
 
 
 def _promote_command(args: argparse.Namespace) -> int:
@@ -408,16 +300,22 @@ def _loop_command(args: argparse.Namespace) -> int:
     return exit_code
 
 
-def main_status(argv: Optional[Sequence[str]] = None) -> int:
-    return _script("pt_status", list(argv or []))
+def main_status(argv=None):
+    return main(["status", *(sys.argv[1:] if argv is None else argv)])
 
 
-def main_report(argv: Optional[Sequence[str]] = None) -> int:
-    return _script("pt_report", list(argv or []))
+def main_report(argv=None):
+    return main(["report", *(sys.argv[1:] if argv is None else argv)])
 
 
 def main_integrity(argv: Optional[Sequence[str]] = None) -> int:
-    return _script("check_posttrain_integrity", list(argv or []))
+    return _script("check_posttrain_integrity", list(sys.argv[1:] if argv is None else argv))
+
+
+def _status_command(_args):
+    from .runtime_cli import status
+
+    return status(root=ROOT, outputs=OUTPUTS)
 
 
 def _hashed(body: Dict[str, Any]) -> Dict[str, Any]:
@@ -563,88 +461,20 @@ def _bootstrap(args: argparse.Namespace) -> int:
     return 0
 
 
-def _policy_validate(args: argparse.Namespace) -> int:
-    path = Path(args.path)
+def _policy_validate(args):
     try:
-        secure_policy = load_policy(path)
-        recipe_path = ROOT / "configs/posttrain/recipe-policy.json"
-        policy = json.loads(recipe_path.read_text(encoding="utf-8"))
-        required = {
-            "schema_version",
-            "allowed_licenses",
-            "reward_weights",
-            "reward_clamp",
-            "promotion_gates",
-        }
-        missing = sorted(required - set(policy))
-        if missing:
-            raise ValueError("missing policy keys: " + ", ".join(missing))
-        if policy.get("protected") is not True:
-            raise ValueError("policy must be protected")
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"status": "failed", "error": str(exc)}))
-        return 5
-    print(
-        json.dumps(
-            {
-                "status": "ok",
-                "policy": str(secure_policy.path),
-                "recipe_policy": str(recipe_path),
-            }
-        )
-    )
-    return 0
-
-
-def _eval_validate(args: argparse.Namespace) -> int:
-    cfg = cfgmod.resolve_config(Path(args.config))
-    path = (
-        Path(args.suite)
-        if args.suite
-        else ROOT / cfg["eval"].get("dev_suite", "data/eval/dev.json")
-    )
-    try:
-        suite = load_suite(path, profile="dev")
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"status": "failed", "error": str(exc)}))
-        return 5
-    print(
-        json.dumps(
-            {"status": "ok", "cases": len(suite["cases"]), "suite_hash": suite["suite_hash"]}
-        )
-    )
-    return 0
-
-
-def _register_promotion(args: argparse.Namespace) -> int:
-    try:
-        suite_path = Path(args.path)
-        document = register_promotion_suite(suite_path, Path(args.registry), repo_root=ROOT)
-        suite_document = json.loads(suite_path.read_text(encoding="utf-8"))
-        cases = suite_document.get("cases", suite_document)
-        if not isinstance(cases, list):
-            raise ValueError("promotion suite must contain case records")
-        data_dir = ROOT / "outputs/posttrain/data"
-        existing_path = data_dir / "decontamination.json"
-        records = list(cases)
-        sources = [{"source": "promotion", "suite_hash": document["suite_hash"]}]
-        if existing_path.exists():
-            existing = json.loads(existing_path.read_text(encoding="utf-8"))
-            records.extend(
-                {"document": entry["canonical"]} for entry in existing.get("entries", [])
-            )
-            sources = existing.get("sources", []) + sources
-        policy_hash = cfgmod.resolve_config(cfgmod.DEFAULT_CONFIG)["policy_hash"]
-        corpus = build_decontamination_corpus(
-            records, existing_path, sources=sources, policy_hash=policy_hash
-        )
-        document["decontamination_hash"] = corpus["artifact_hash"]
-        Path(args.registry).write_text(json.dumps(document, indent=2), encoding="utf-8")
+        policy = load_policy(Path(args.path))
     except (OSError, ValueError) as exc:
         print(json.dumps({"status": "failed", "error": str(exc)}))
         return 5
-    print(json.dumps({"status": "ok", **document}))
+    print(json.dumps({"status": "ok", "policy": str(policy.path)}))
     return 0
+
+
+def _eval_validate(_args):
+    from .runtime_cli import validate_suite
+
+    return validate_suite()
 
 
 def _failures_mine(args: argparse.Namespace) -> int:
@@ -677,132 +507,6 @@ def _failures_mine(args: argparse.Namespace) -> int:
         print(json.dumps({"status": "failed", "error": f"{type(exc).__name__}: {exc}"}))
         return 5
     print(json.dumps({"status": "ok", "artifact": str(path)}))
-    return 0
-
-
-def _train_rlvr(args: argparse.Namespace) -> int:
-    if not (args.real and args.allow_gpu and args.allow_checkpoints):
-        print("train rlvr requires --real --allow-gpu --allow-checkpoints", file=sys.stderr)
-        return 2
-    try:
-        from datasets import IterableDataset
-
-        cfg = cfgmod.resolve_config(Path(args.config))
-        policy = json.loads(Path(args.policy).read_text(encoding="utf-8"))
-        data_dir = Path(args.data)
-        manifest = verify_trainable_manifest(
-            data_dir / "manifest.json", expected_policy_hash=cfg.get("policy_hash")
-        )
-        paths = [
-            data_dir / shard["path"]
-            for shard in manifest.get("shards", [])
-            if shard.get("schema") == "rlvr"
-        ]
-        if not paths:
-            raise ValueError("data manifest has no RLVR shards")
-        minimum_vram = float(cfg.get("hardware", {}).get("minimum_vram_gb", 40))
-        validate_device(args.device, minimum_vram_gb=minimum_vram)
-        dataset = IterableDataset.from_generator(iter_rlvr_rows, gen_kwargs={"paths": paths})
-        run_id = f"rlvr-{stamp()}"
-        out_dir = Path(args.output) / run_id
-        identifier = language_identifier_from_config(
-            cfg["data"], cache_dir=Path(args.output).parent / "cache"
-        )
-        registered: list[Mapping[str, Any]] = []
-        result = train_rlvr(
-            model_ref=cfg["training"]["base_model"],
-            dataset=dataset,
-            output_dir=out_dir,
-            config=cfg,
-            policy=policy,
-            device=args.device,
-            deadline=time.monotonic() + args.budget_minutes * 60,
-            language_id=identifier,
-            register_candidate=registered.append,
-        )
-        if result["status"] == "ok":
-            card = new_run_card(
-                run_id,
-                "train_rlvr",
-                "pt train rlvr",
-                model=cfg["training"]["base_model"],
-                data_manifest=str(data_dir / "manifest.json"),
-                metrics=result["metrics"],
-                input_artifacts=[str(data_dir / "manifest.json")],
-                output_artifacts=[result["adapter"]],
-            )
-            write_run_card(card, out_dir)
-            append_event(
-                Path(args.output).parent / "events.jsonl",
-                {
-                    "event": "train_rlvr",
-                    "run_id": run_id,
-                    "run_card": str(out_dir / "run_card.json"),
-                },
-            )
-    except IntegrityError as exc:
-        print(json.dumps({"status": "failed", "error": f"IntegrityError: {exc}"}))
-        return 5
-    except (ImportError, OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
-        print(json.dumps({"status": "failed", "error": f"{type(exc).__name__}: {exc}"}))
-        return 4
-    print(json.dumps(result, ensure_ascii=False))
-    return 0 if result["status"] == "ok" else 4
-
-
-def _train_grpo(args: argparse.Namespace) -> int:
-    if not (args.real and args.allow_gpu and args.allow_checkpoints):
-        print("train grpo requires --real --allow-gpu --allow-checkpoints", file=sys.stderr)
-        return 2
-    try:
-        from datasets import Dataset
-
-        cfg = cfgmod.resolve_config(Path(args.config))
-        if cfg.get("verified_rl", {}).get("enabled") is not True:
-            raise ValueError("verified-math GRPO is disabled by verified_rl.enabled=false")
-        data_dir = Path(args.data)
-        verify_trainable_manifest(
-            data_dir / "manifest.json", expected_policy_hash=cfg.get("policy_hash")
-        )
-        train_rows = load_manifest_rows(data_dir / "manifest.json", "verified_math", split="train")
-        validation_rows = load_manifest_rows(
-            data_dir / "manifest.json", "verified_math", split="validation"
-        )
-        minimum_vram = float(cfg.get("hardware", {}).get("minimum_vram_gb", 40))
-        validate_device(args.device, minimum_vram_gb=minimum_vram)
-        run_id = f"grpo-{stamp()}"
-        out_dir = Path(args.output) / run_id
-        result = train_verified_grpo(
-            model_ref=cfg["training"]["base_model"],
-            train_dataset=Dataset.from_list(train_rows),
-            eval_dataset=Dataset.from_list(validation_rows),
-            output_dir=out_dir,
-            config=cfg,
-            device=args.device,
-            deadline=time.monotonic() + args.budget_minutes * 60,
-        )
-        card = new_run_card(
-            run_id,
-            "train_grpo",
-            "pt train grpo",
-            model=cfg["training"]["base_model"],
-            data_manifest=str(data_dir / "manifest.json"),
-            metrics=result["metrics"],
-            input_artifacts=[str(data_dir / "manifest.json")],
-            output_artifacts=[result["adapter"]],
-        )
-        write_run_card(card, out_dir)
-        append_event(
-            Path(args.output).parent / "events.jsonl",
-            {"event": "train_grpo", "run_id": run_id, "run_card": str(out_dir / "run_card.json")},
-        )
-    except IntegrityError as exc:
-        print(json.dumps({"status": "failed", "error": f"IntegrityError: {exc}"}))
-        return 5
-    except (ImportError, OSError, RuntimeError, ValueError, KeyError) as exc:
-        print(json.dumps({"status": "failed", "error": f"{type(exc).__name__}: {exc}"}))
-        return 4
-    print(json.dumps({"run_id": run_id, **result}, ensure_ascii=False))
     return 0
 
 
@@ -1368,60 +1072,37 @@ def build_parser() -> argparse.ArgumentParser:
     model_resolve.set_defaults(handler=_model_command)
 
     evaluation = commands.add_parser("eval")
-    eval_sub = evaluation.add_subparsers(dest="action", required=True)
+    eval_sub = evaluation.add_subparsers(dest="action", required=True, parser_class=GatedParser)
     eval_run = eval_sub.add_parser("run")
-    eval_run.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    eval_reference = eval_run.add_mutually_exclusive_group(required=True)
-    eval_reference.add_argument("--model", default=None)
-    eval_reference.add_argument("--candidate", default=None)
-    eval_run.add_argument("--external-root", action="append", default=[])
-    eval_run.add_argument("--label", default=None)
-    eval_run.add_argument("--out", default=str(ROOT / "outputs/posttrain/evals"))
-    eval_run.add_argument("--device", default="cuda:0")
-    eval_run.add_argument("--profile", choices=["proxy", "dev", "promotion"], default="dev")
-    eval_run.add_argument("--suite", default=None)
-    eval_run.add_argument("--budget-minutes", type=int, default=90)
-    eval_run.add_argument("--real", action="store_true")
-    eval_run.add_argument("--dry-run", action="store_true")
+    _explicit_mode(eval_run)
     eval_run.add_argument("--allow-gpu", action="store_true")
+    eval_run.add_argument("--config", default="configs/posttrain/secure-current.json")
+    eval_reference = eval_run.add_mutually_exclusive_group(required=True)
+    eval_reference.add_argument("--model")
+    eval_reference.add_argument("--candidate")
+    eval_run.add_argument("--external-root", action="append", default=[])
+    eval_run.add_argument("--device", choices=("cuda:0",), default="cuda:0")
+    eval_run.add_argument("--budget-minutes", type=float, default=90.0)
     eval_run.set_defaults(handler=_eval_run_command)
     validate = eval_sub.add_parser("validate-suite")
-    validate.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    validate.add_argument("--suite", default=None)
     validate.set_defaults(handler=_eval_validate)
     catalog = eval_sub.add_parser("catalog")
     catalog.set_defaults(handler=_eval_catalog_command)
-    register = eval_sub.add_parser("register-promotion-suite")
-    register.add_argument("--path", required=True)
-    register.add_argument(
-        "--registry", default=str(ROOT / "configs/posttrain/promotion-suite.json")
-    )
-    register.set_defaults(handler=_register_promotion)
 
     baseline = commands.add_parser("baseline")
-    baseline_sub = baseline.add_subparsers(dest="action", required=True)
+    baseline_sub = baseline.add_subparsers(dest="action", required=True, parser_class=GatedParser)
     baseline_run = baseline_sub.add_parser("run")
-    baseline_run.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    baseline_run.add_argument("--out", default=str(ROOT / "outputs/posttrain/baseline"))
-    baseline_run.add_argument("--model", default=None)
-    baseline_run.add_argument("--label", default="baseline-seed")
-    baseline_run.add_argument("--device", default="cuda:0")
-    baseline_run.add_argument("--profile", choices=["dev", "promotion"], default="dev")
-    baseline_run.add_argument("--suite", default=None)
-    baseline_run.add_argument("--budget-minutes", type=int, default=90)
-    baseline_run.add_argument("--real", action="store_true")
-    baseline_run.add_argument("--dry-run", action="store_true")
+    _explicit_mode(baseline_run)
     baseline_run.add_argument("--allow-gpu", action="store_true")
+    baseline_run.add_argument("--config", default="configs/posttrain/secure-current.json")
+    baseline_run.add_argument("--model")
+    baseline_run.add_argument("--device", choices=("cuda:0",), default="cuda:0")
+    baseline_run.add_argument("--budget-minutes", type=float, default=90.0)
+    baseline_run.add_argument("--replace-baseline", action="store_true")
     baseline_run.set_defaults(handler=_baseline_run_command)
 
     score = commands.add_parser("score")
-    score.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    score.add_argument("--run", default=None)
-    score.add_argument("--candidate", default=None)
-    score.add_argument("--baseline", default=None)
-    score.add_argument("--out", default=None)
-    score.add_argument("--profile", choices=["dev", "promotion"], default="dev")
-    score.add_argument("--format", choices=["json", "markdown"], default="json")
+    score.add_argument("--candidate", required=True, help="exact canonical evaluation run ID")
     score.set_defaults(handler=_score_command)
 
     failures = commands.add_parser("failures")
@@ -1443,11 +1124,6 @@ def build_parser() -> argparse.ArgumentParser:
         )
         secure_train.add_argument("--budget-minutes", type=float, default=90.0)
         secure_train.add_argument("--specialist")
-        if name in {"sft", "cpt", "preference"}:
-            secure_train.add_argument("--out", default=str(ROOT / "outputs/posttrain/runs"))
-            secure_train.add_argument("--data", default=str(ROOT / "outputs/posttrain/data"))
-            secure_train.add_argument("--device", default="cuda:0")
-            secure_train.add_argument("--mix-plan")
         if name == "preference":
             secure_train.add_argument("--method", choices=("dpo", "kto", "orpo"))
         if name in {"opd", "distill"}:
@@ -1457,23 +1133,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     data = commands.add_parser("data")
     data_sub = data.add_subparsers(dest="action", required=True, parser_class=GatedParser)
-    discover = data_sub.add_parser("discover")
-    _explicit_mode(discover)
-    discover.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    discover.add_argument("--out", default=str(ROOT / "outputs/posttrain/data/discovery.json"))
-    discover.add_argument("--format", choices=("json", "markdown"), default="json")
-    discover.set_defaults(handler=_data_discover_command)
-    prepare = data_sub.add_parser("prepare")
-    prepare.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    prepare.add_argument("--discovery", default=str(ROOT / "outputs/posttrain/data/discovery.json"))
-    prepare.add_argument("--selection", default=str(ROOT / "outputs/posttrain/data/selection.json"))
-    prepare.add_argument("--discovery-run-id")
-    prepare.add_argument("--selection-run-id")
-    prepare.add_argument("--out", default=str(ROOT / "outputs/posttrain/data"))
-    prepare.add_argument("--format", choices=["json", "markdown"], default="json")
-    prepare.add_argument("--real", action="store_true")
-    prepare.add_argument("--dry-run", action="store_true")
-    prepare.set_defaults(handler=_data_prepare_command)
+    for action, handler in (
+        ("discover", _data_discover_command),
+        ("prepare", _data_prepare_command),
+    ):
+        command = data_sub.add_parser(action)
+        _explicit_mode(command)
+        command.add_argument("--config", default="configs/posttrain/secure-current.json")
+        command.set_defaults(handler=handler)
     synthesize = data_sub.add_parser("synthesize")
     synthesize.add_argument("--from-failure-run", required=True)
     synthesize.add_argument("--teacher", required=True)
@@ -1527,16 +1194,8 @@ def build_parser() -> argparse.ArgumentParser:
     merge_sub = merge.add_subparsers(dest="action", required=True, parser_class=GatedParser)
     merge_search = merge_sub.add_parser("search")
     _explicit_mode(merge_search, gpu=True)
-    merge_search.add_argument("--config", default=str(cfgmod.DEFAULT_CONFIG))
-    merge_search.add_argument("--budget-minutes", type=float)
-    merge_search.add_argument("--runs", default=str(ROOT / "outputs/posttrain/runs"))
-    merge_search.add_argument(
-        "--frontier", default=str(ROOT / "outputs/posttrain/specialist-frontiers.json")
-    )
-    merge_search.add_argument("--out", default=str(ROOT / "outputs/posttrain/merge"))
-    merge_search.add_argument("--format", choices=("json", "markdown"), default="json")
-    merge_search.add_argument("--merge-device", default="cpu")
-    merge_search.add_argument("--device", default="cuda:0")
+    merge_search.add_argument("--config", default="configs/posttrain/secure-current.json")
+    merge_search.add_argument("--budget-minutes", type=float, default=90.0)
     merge_search.set_defaults(handler=_merge_command)
 
     distill = commands.add_parser("distill")
@@ -1547,15 +1206,14 @@ def build_parser() -> argparse.ArgumentParser:
     distill.add_argument("--budget-minutes", type=float)
     distill.set_defaults(handler=_distill_command)
 
-    script_map = {
-        "status": "pt_status",
-        "report": "pt_report",
-        "integrity": "check_posttrain_integrity",
-    }
-    for name, stem in script_map.items():
-        command = commands.add_parser(name, add_help=False)
-        command.set_defaults(handler=lambda args, value=stem: _script(value, args.remainder))
-        command.add_argument("remainder", nargs=argparse.REMAINDER)
+    for name in ("status", "report"):
+        command = commands.add_parser(name)
+        command.set_defaults(handler=_status_command)
+    integrity = commands.add_parser("integrity", add_help=False)
+    integrity.set_defaults(
+        handler=lambda args: _script("check_posttrain_integrity", args.remainder)
+    )
+    integrity.add_argument("remainder", nargs=argparse.REMAINDER)
     loop = commands.add_parser("loop")
     loop_sub = loop.add_subparsers(dest="action", required=True, parser_class=GatedParser)
     loop_run = loop_sub.add_parser("run")

@@ -1,16 +1,12 @@
-"""boldt_posttrain — shared, stdlib-only helpers for the German post-training AutoResearch loop.
-
-The loop's core (config resolution, provenance/run cards, the deterministic scorer, the trial
-recipe, and the frontier view) lives here so the ``scripts/pt_*.py`` CLIs stay thin and the
-scoring/gate logic has ONE auditable definition. Heavy ML (torch/transformers/trl/peft/mergekit)
-is imported lazily inside ``--real`` code paths only; importing this package pulls in nothing
-beyond the standard library.
-"""
+"""German post-training loop; heavy ML dependencies load only during execution."""
 
 import importlib.util as _importlib_util
 import os as _os
+from importlib.metadata import version as _version
 
-# Prefer HuggingFace's accelerated Rust download backend when it is installed
+# Compatibility with the locked huggingface-hub 0.36 download backend.
+# Hub 1.x uses hf-xet instead; remove this together with the dependency migration.
+# Prefer the accelerated Rust download backend when it is installed
 # (the `data` real extra ships it). setdefault keeps an operator override, and the
 # find_spec guard avoids forcing it on a minimal install that lacks the package,
 # where huggingface_hub would otherwise raise on the first download.
@@ -36,4 +32,4 @@ __all__ = [
     "scoring",
     "training",
 ]
-__version__ = "0.2.0"
+__version__ = _version("boldt-posttrain-autoresearch")

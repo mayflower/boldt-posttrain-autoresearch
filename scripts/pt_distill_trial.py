@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-from boldt_posttrain.cli import main
+"""Compatibility entrypoint for `pt distill`; canonical artifacts only."""
+
+import sys
+
+from boldt_posttrain.cli import main as _main
+
+
+def main(argv=None):
+    return _main(["distill"] + list(sys.argv[1:] if argv is None else argv))
 
 
 if __name__ == "__main__":

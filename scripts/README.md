@@ -1,12 +1,11 @@
-The `.claude` commands call these `pt_*.py` scripts by the contract in
-`docs/posttrain-script-contracts.md`. They are implemented dry-run-first: dry mode is pure stdlib
-and writes the contracted artifacts as unmeasured plumbing; `--real` paths gate on `--allow-gpu`
-plus the optional ML stack (`pip install -e '.[train,eval,merge,data]'`) and fail closed until the
-concrete trainer/eval/merge is implemented (never fabricating metrics).
+The supported interface is `uv run --locked python -m boldt_posttrain.cli`.
+The `.claude/commands/pt-*.md` wrappers use that interface directly.
 
-Shared logic lives in `src/boldt_posttrain/` (config resolution, provenance/run cards, the
-protected scorer, the training-lever skeleton, the frontier view). Drive the loop through the
-`/pt-*` Claude commands (each calls `uv run --locked python scripts/pt_*.py` directly — there
-is no Makefile).
-Validate with `uv run --locked python -m py_compile scripts/pt_*.py
-scripts/check_posttrain_integrity.py` and `uv run --locked python -m unittest discover -s tests`.
+The `pt_*.py` compatibility entrypoints for data, baseline, eval, score, promote,
+merge, loop, distillation and status/report forward to the canonical CLI without
+changing exit codes. `pt_log_result.py` is a historical TSV utility, outside the
+verified event chain. Other scripts build protected evaluation fixtures, check
+integrity, sync the locked environment or run explicit measurements.
+
+Validate with `uv run --locked --all-extras pytest` and
+`uv run --locked --all-extras ruff check src tests scripts`.

@@ -7,7 +7,7 @@ disable-model-invocation: true
 Invoke exactly one mode. Real execution:
 
 ```bash
-uv run --locked python -m boldt_posttrain.cli baseline run --real --allow-gpu --config configs/posttrain/current.json
+uv run --locked python -m boldt_posttrain.cli baseline run --real --allow-gpu --config configs/posttrain/secure-current.json
 ```
 
 For a plan replace the execution flags with `--dry-run`.

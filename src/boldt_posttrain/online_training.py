@@ -105,6 +105,8 @@ def make_distillation_trainer(
     journal: RolloutJournal,
     callbacks,
 ):
+    if method not in {"sdpo", "sdft"}:
+        raise ValueError("feedback-conditioned trainer supports only SDPO and SDFT")
     import torch
     from transformers import Trainer
 
@@ -143,9 +145,7 @@ def make_distillation_trainer(
                 if not answer_ids.numel():
                     raise RuntimeError("online student generated no tokens")
                 response = tokenizer.decode(answer_ids[0], skip_special_tokens=True)
-                teacher_prompt = (
-                    row["prompt"] if method == "opd" else self_teacher_prompt(row, method, response)
-                )
+                teacher_prompt = self_teacher_prompt(row, method, response)
                 teacher_encoded = _encode(
                     tokenizer,
                     teacher_prompt,
@@ -272,6 +272,103 @@ def make_rl_trainer(
     )
 
 
+def make_opd_trainer(*, model, teacher, tokenizer, dataset, args, settings, journal, callbacks):
+    """Use TRL's pinned on-policy sampler and GKD objective; add provenance only."""
+    import torch
+    from trl import GKDTrainer
+
+    def collate(rows):
+        ids = [
+            _encode(tokenizer, row["prompt"], device="cpu", maximum=settings["max_prompt_length"])[
+                "input_ids"
+            ][0]
+            for row in rows
+        ]
+        width = max(len(tokens) for tokens in ids)
+        prompts = torch.full((len(ids), width), tokenizer.pad_token_id, dtype=torch.long)
+        mask = torch.zeros_like(prompts)
+        for index, tokens in enumerate(ids):
+            prompts[index, -len(tokens) :] = tokens
+            mask[index, -len(tokens) :] = 1
+        return {
+            "prompts": prompts,
+            "prompt_attention_mask": mask,
+            "input_ids": prompts.clone(),
+            "attention_mask": mask.clone(),
+            "labels": torch.full_like(prompts, -100),
+            "content_ids": [row["content_id"] for row in rows],
+        }
+
+    class RecordedGKDTrainer(GKDTrainer):
+        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+            if inputs["input_ids"].shape[-1] > teacher.config.max_position_embeddings:
+                raise ValueError("OPD rollout exceeds teacher context; truncation is forbidden")
+            captured = {}
+            hook = self.teacher_model.register_forward_hook(
+                lambda _model, _inputs, output: captured.update(logits=output.logits.detach())
+            )
+            try:
+                loss, output = super().compute_loss(
+                    model, inputs, return_outputs=True, num_items_in_batch=num_items_in_batch
+                )
+                if not torch.isfinite(loss).all():
+                    raise RuntimeError("non-finite on-policy distillation loss")
+                prefix = inputs["prompts"].shape[1]
+                with torch.no_grad():
+                    for index, identity in enumerate(inputs["content_ids"]):
+                        valid = inputs["labels"][index, prefix:] != -100
+                        completion = inputs["input_ids"][index, prefix:][valid]
+                        if not completion.numel():
+                            raise RuntimeError("online student generated no trainable tokens")
+                        student_logits = output.logits[index, prefix - 1 : -1][valid].detach()
+                        teacher_logits = captured["logits"][index, prefix - 1 : -1][valid]
+                        kl, student_logs, teacher_logs = reverse_kl(
+                            student_logits, teacher_logits, chunk_size=settings["logit_chunk_size"]
+                        )
+                        selected_student, selected_teacher = [], []
+                        for chunk, (slog, tlog) in enumerate(zip(student_logs, teacher_logs)):
+                            start = chunk * settings["logit_chunk_size"]
+                            tokens = completion[start : start + slog.shape[0], None]
+                            selected_student.extend(
+                                slog.gather(-1, tokens).flatten().cpu().tolist()
+                            )
+                            selected_teacher.extend(
+                                tlog.gather(-1, tokens).flatten().cpu().tolist()
+                            )
+                        journal.record(
+                            {
+                                "method": "opd",
+                                "trainer": "trl.GKDTrainer",
+                                "rollout_policy_step": self.state.global_step,
+                                "content_id": identity,
+                                "prompt_ids": inputs["prompts"][index][
+                                    inputs["prompt_attention_mask"][index].bool()
+                                ].tolist(),
+                                "completion_ids": completion.tolist(),
+                                "response": tokenizer.decode(completion, skip_special_tokens=True),
+                                "student_log_probs": selected_student,
+                                "teacher_log_probs": selected_teacher,
+                                "token_reverse_kl": kl.cpu().tolist(),
+                            }
+                        )
+                return (loss, output) if return_outputs else loss
+            finally:
+                hook.remove()
+                captured.clear()
+
+    trainer = RecordedGKDTrainer(
+        model=model,
+        teacher_model=teacher,
+        args=args,
+        data_collator=collate,
+        processing_class=tokenizer,
+        train_dataset=dataset,
+        callbacks=callbacks,
+    )
+    trainer.generation_config.min_new_tokens = settings["min_completion_length"]
+    return trainer
+
+
 def _published_ref(source: Path, destination: Path, *, role: str, root: Path) -> dict[str, Any]:
     media_type = (
         "application/vnd.boldt.peft-adapter"
@@ -322,7 +419,7 @@ def train_online_candidate(
     from datasets import Dataset
     from peft import LoraConfig, PeftModel, get_peft_model, get_peft_model_state_dict
     from transformers import TrainerCallback, TrainingArguments, set_seed
-    from trl import GRPOConfig, RLOOConfig
+    from trl import GKDConfig, GRPOConfig, RLOOConfig
 
     from .secure_compat import provenance
     from .secure_compat.training import (
@@ -487,6 +584,29 @@ def train_online_candidate(
                 journal=journal,
                 callbacks=[OnlineStepCallback()],
             )
+        elif method == "opd":
+            args = GKDConfig(
+                **common,
+                lmbda=1.0,
+                beta=1.0,
+                seq_kd=False,
+                disable_dropout=True,
+                max_length=training["context_length"],
+                max_new_tokens=settings["max_completion_length"],
+                temperature=settings["temperature"],
+                packing=False,
+            )
+            args._n_gpu = 1
+            trainer = make_opd_trainer(
+                model=model,
+                teacher=teacher,
+                tokenizer=tokenizer,
+                dataset=Dataset.from_list(rows),
+                args=args,
+                settings=settings,
+                journal=journal,
+                callbacks=[OnlineStepCallback()],
+            )
         else:
             args = TrainingArguments(**common)
             args._n_gpu = 1
@@ -570,6 +690,15 @@ def train_online_candidate(
             "training": dict(training),
             "online": settings,
             "rollout_source": "current_student",
+            "trainer": "trl.GKDTrainer"
+            if method == "opd"
+            else (
+                "trl.GRPOTrainer"
+                if method == "grpo"
+                else "trl.RLOOTrainer"
+                if method == "rloo"
+                else "feedback_conditioned_trainer"
+            ),
             "teacher": teacher_ref.to_dict() if teacher_ref else None,
             "teacher_license": teacher_license,
             "self_teacher": "ema" if method in {"sdpo", "sdft"} else None,

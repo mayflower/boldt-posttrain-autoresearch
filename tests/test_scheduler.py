@@ -47,6 +47,28 @@ def test_integrity_error_stops_search_immediately():
         )
 
 
+@pytest.mark.parametrize("returned_failure", [False, True])
+def test_technical_failure_never_runs_another_trial(returned_failure):
+    calls = []
+
+    def fail(trial, rung, parent):
+        calls.append(trial["trial_id"])
+        if returned_failure:
+            return {"status": "failed", "technical_error_count": 1}
+        raise RuntimeError("CUDA failure")
+
+    with pytest.raises(RuntimeError):
+        run_successive_halving(
+            plan={
+                "trials": [{"trial_id": "a", "overrides": {}}, {"trial_id": "b", "overrides": {}}]
+            },
+            full_budget=1000,
+            train_and_proxy=fail,
+            dev_evaluate=lambda _: pytest.fail("must not evaluate after failure"),
+        )
+    assert calls == ["a"]
+
+
 def test_successful_but_ungated_trials_are_rejected_not_technical_failure():
     plan = {"trials": [{"trial_id": "a", "overrides": {"learning_rate": 1e-5}}]}
     result = run_successive_halving(

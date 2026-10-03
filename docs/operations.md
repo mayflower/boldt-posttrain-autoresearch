@@ -5,7 +5,7 @@
 ```bash
 export CUDA_DEVICE_ORDER=FASTEST_FIRST
 export CUDA_VISIBLE_DEVICES=0
-scripts/sync_env.sh
+uv run --locked bash scripts/sync_env.sh
 uv run --locked python -m boldt_posttrain.cli doctor --mode all --real --allow-gpu
 uv run --locked python -m boldt_posttrain.cli policy validate
 uv run --locked python -m boldt_posttrain.cli eval validate-suite
@@ -16,9 +16,10 @@ seed accessibility/fingerprints, disk space, lm-eval task validity, and Mergekit
 
 ## Downloads
 
-`hf-transfer` is a locked dependency and `boldt_posttrain` enables it (`HF_HUB_ENABLE_HF_TRANSFER=1`) whenever it is importable, so model and dataset
+With the locked `huggingface-hub==0.36.0`, `hf-transfer` is a compatibility dependency and `boldt_posttrain` enables it (`HF_HUB_ENABLE_HF_TRANSFER=1`) whenever it is importable, so model and dataset
 pulls use HuggingFace's accelerated backend by default. Override by exporting the
-variable yourself before running.
+variable yourself before running. Hub 1.x removes this backend and uses `hf-xet`;
+that migration must update the lock and this initialization together.
 
 ## Dry Plans
 

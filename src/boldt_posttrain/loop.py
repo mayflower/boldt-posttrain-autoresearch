@@ -115,6 +115,13 @@ def _execute_lever(
                 )
             else:
                 teacher = resolve_model(policy=policy, model=teacher_name)
+            if getattr(teacher, "kind", None) == "hub_model" and teacher.base_model == {
+                "repo_id": policy.seed_model["repo_id"],
+                "revision": policy.seed_model["revision"],
+            }:
+                raise LoopError(
+                    "OPD requires a distinct teacher; the unchanged student seed supplies no additional teaching signal"
+                )
             license_id = _teacher_license(teacher, policy, settings["teacher_license"])
         return train_online_candidate(
             config=config.document,
@@ -162,6 +169,7 @@ def train_one_lever(
     allow_gpu: bool,
     allow_checkpoints: bool,
     specialist: str | None = None,
+    preference_method: str | None = None,
     teacher: str | None = None,
     teacher_license: str | None = None,
     outputs_root: Path = OUTPUTS,
@@ -196,6 +204,10 @@ def train_one_lever(
         config.document["experiment"]["lever"] = lever
         if specialist:
             config.document["training"]["specialist"] = specialist
+        if preference_method is not None:
+            if lever != "preference" or preference_method not in {"dpo", "kto", "orpo"}:
+                raise ValueError("preference method requires a preference lever and dpo/kto/orpo")
+            config.document["preference"]["method"] = preference_method
         if teacher is not None:
             config.document["distillation"]["teacher"] = teacher
         if teacher_license is not None:

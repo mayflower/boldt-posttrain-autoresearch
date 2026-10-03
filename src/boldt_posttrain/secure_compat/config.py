@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CONFIG = ROOT / "configs" / "posttrain" / "current.json"
+DEFAULT_CONFIG = ROOT / "configs" / "posttrain" / "secure-current.json"
 
 FORBIDDEN_KEY_FRAGMENTS = (
     "threshold",

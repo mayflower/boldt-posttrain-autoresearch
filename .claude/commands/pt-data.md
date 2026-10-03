@@ -7,8 +7,8 @@ disable-model-invocation: true
 Use the selected mode consistently:
 
 ```bash
-uv run --locked python -m boldt_posttrain.cli data discover --real --config configs/posttrain/current.json
-uv run --locked python -m boldt_posttrain.cli data prepare --real --config configs/posttrain/current.json
+uv run --locked python -m boldt_posttrain.cli data discover --real --config configs/posttrain/secure-current.json
+uv run --locked python -m boldt_posttrain.cli data prepare --real --config configs/posttrain/secure-current.json
 ```
 
 For plans use `--dry-run` on both commands. Emit each JSON result unchanged.

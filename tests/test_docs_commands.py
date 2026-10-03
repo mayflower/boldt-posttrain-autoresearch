@@ -2,6 +2,7 @@ import shlex
 from pathlib import Path
 
 from boldt_posttrain.cli import build_parser
+from boldt_posttrain.secure_compat.config import load_experiment
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -43,7 +44,14 @@ def test_documented_cli_examples_parse_successfully():
             argv.pop()
         argv = ["ARGUMENTS" if token == "$ARGUMENTS" else token for token in argv]
         try:
-            parser.parse_args(argv)
+            args = parser.parse_args(argv)
+            if (
+                args.command in {"train", "distill", "loop", "baseline", "merge"}
+                or (args.command == "data" and args.action in {"discover", "prepare"})
+                or (args.command == "eval" and args.action == "run")
+            ):
+                if "$" not in args.config and args.config != "ARGUMENTS":
+                    load_experiment(ROOT / args.config)
         except Exception as exc:
             failures.append(f"{document.relative_to(ROOT)}: {command}: {exc}")
     assert failures == []

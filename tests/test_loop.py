@@ -1,78 +1,36 @@
-"""pt_loop deterministic iteration: dry/missing-baseline runs are never promotable (unittest)."""
+"""Compatibility entrypoints delegate to the canonical CLI without changing status."""
 
-import contextlib
 import importlib.util
-import io
-import json
-import pathlib
-import tempfile
-import unittest
+from pathlib import Path
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+import pytest
+
+from boldt_posttrain import cli
 
 
-def _load_loop():
-    path = ROOT / "scripts" / "pt_loop.py"
-    spec = importlib.util.spec_from_file_location("pt_loop", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _run(argv):
-    mod = _load_loop()
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        rc = mod.main(argv)
-    return rc, json.loads(buf.getvalue())
-
-
-class TestLoop(unittest.TestCase):
-    def test_dry_run_is_not_promotable(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = pathlib.Path(tmp)
-            rc, verdict = _run(
-                [
-                    "--candidate",
-                    "baseline-seed",
-                    "--label",
-                    "t-dry",
-                    "--evals-out",
-                    str(tmp / "evals"),
-                    "--results",
-                    str(tmp / "results.tsv"),
-                    "--baseline",
-                    str(tmp / "no-baseline.json"),
-                    "--dry-run",
-                ]
-            )
-        self.assertEqual(rc, 1)
-        self.assertFalse(verdict["promotable"])
-        self.assertEqual(verdict["mode"], "dry_run")
-        # the eval ran and a results row was logged even though it is not promotable
-        self.assertEqual(verdict["eval_status"], "ok")
-
-    def test_missing_baseline_skips_score_and_blocks_promotion(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = pathlib.Path(tmp)
-            rc, verdict = _run(
-                [
-                    "--label",
-                    "t-nob",
-                    "--evals-out",
-                    str(tmp / "evals"),
-                    "--results",
-                    str(tmp / "results.tsv"),
-                    "--baseline",
-                    str(tmp / "missing.json"),
-                    "--dry-run",
-                ]
-            )
-        self.assertEqual(rc, 1)
-        self.assertIsNone(verdict["score_status"])  # score skipped (no baseline)
-        self.assertFalse(verdict["baseline_present"])
-        self.assertFalse(verdict["promotable"])
-
-
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize(
+    ("script", "prefix"),
+    [
+        ("pt_baseline", ["baseline", "run"]),
+        ("pt_eval", ["eval", "run"]),
+        ("pt_score", ["score"]),
+        ("pt_promote", ["promote"]),
+        ("pt_status", ["status"]),
+        ("pt_report", ["report"]),
+        ("pt_frontier_status", ["status"]),
+        ("pt_merge_search", ["merge", "search"]),
+        ("pt_discover_openeurollm_de", ["data", "discover"]),
+        ("pt_prepare_openeurollm_de", ["data", "prepare"]),
+        ("pt_loop", ["loop", "run"]),
+        ("pt_distill_trial", ["distill"]),
+    ],
+)
+def test_scripts_forward_exact_arguments_and_nonzero_exit_code(monkeypatch, script, prefix):
+    seen = []
+    monkeypatch.setattr(cli, "main", lambda argv: seen.extend(argv) or 5)
+    path = Path(__file__).resolve().parents[1] / "scripts" / f"{script}.py"
+    spec = importlib.util.spec_from_file_location(script, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.main(["--candidate", "exact-run-id"]) == 5
+    assert seen == [*prefix, "--candidate", "exact-run-id"]

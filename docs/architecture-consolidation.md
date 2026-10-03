@@ -1,187 +1,33 @@
-# Architecture consolidation plan
+# Architecture and remaining consolidation
 
-The repository runs two parallel systems under one CLI. This document maps them
-precisely and sets the order in which they should be merged. It is the plan the
-audit asked for ("ein gemeinsames Run-Format, eine Kandidatenauflösung, eine
-Evaluation und ein Scoring ... die bestehenden Erzeuger und Verbraucher
-zusammenführen").
+The canonical experiment schema is `secure_compat.config.load_experiment`, with
+`configs/posttrain/secure-current.json` as default. Human-owned rules remain in
+`configs/posttrain/policy.json`.
 
-## The two systems
+Data discover/prepare, baseline, train, eval, score, merge, loop, promote, status
+and report now use the canonical artifact lifecycle. `runtime_cli` adapts manual
+commands; `loop` orchestrates the same producers. Compatibility scripts delegate
+to those CLI verbs and preserve exit codes. Prepared data uses `data/current.json`;
+baseline and frontier use verified pointers; candidates use schema-v1 cards and
+the hash-chained event log. Recipe manifests and labels cannot enter these gates.
 
-| Concern | System A ("recipe", top-level) | System B ("secure", canonical) |
-|---|---|---|
-| Config schema | `configs/posttrain/current.json` (`extends` base.json, `recipe-policy.json`, `org`, `sources[].dataset/configs/splits`) | `configs/posttrain/secure-current.json` (`schema_version`, `policy.json`, `sources[].dataset_id/config/split`) |
-| Config loader | `config.resolve_config` (deep-merge `extends`) | `secure_compat.config.load_experiment` |
-| Training producer | `training.run_training_trial` → `_train_real` | `secure_compat.training.train_adapter` |
-| Run id | `{specialist}-{kind}-{real|dry}-{stamp}` (no microseconds, no random suffix) | `artifacts.new_run_id` → matches `RUN_ID_RE` |
-| Run card | `provenance.new_run_card` (`model` is a string; own `validate_run_card`) | `artifacts` run card (`model` is a structured dict; event-chained) |
-| Event chain | none | `artifacts.EventLog` (`events.jsonl` + head) |
-| Evaluation | `evaluation.run_real_evaluation` (dev/proxy, `_default_validate` + top-level scorers) | `secure_compat.evaluation._publish_evaluation` (`score_output`, full validators) |
-| Scoring | `scoring` top-level defs | `secure_compat.scoring.create_score` |
-| Frontier | `frontier` top-level defs | `secure_compat.frontier` |
-| Candidate resolution | — (produces cards the resolver rejects) | `resolver.resolve_candidate` |
-| CLI entry points | `train`, `eval run`, `baseline`, `score`, `promote` | `loop run`, `distill` |
+GRPO/RLOO use native TRL trainers. OPD uses native GKDTrainer with a provenance
+subclass. SDPO/SDFT remain custom on the pinned stack; newer experimental TRL
+implementations need a tested dependency migration. The old offline distillation
+producer has been removed.
 
-The top-level modules (`config`, `data_pipeline`, `distillation`, `evaluation`,
-`frontier`, `merge`, `preference`, `provenance`, `scoring`, `training`) are each
-a partial second implementation **plus** a re-export of the secure twin at the
-end of the file. `secure_compat` in turn imports the shared leaves back from the
-top level (`artifacts`, `policy`, `resolver`, `verifiers`).
+Remaining legacy code is active in the recipe-only bootstrap, failure synthesis,
+search, mix and comparison utilities, which still use `current.json`,
+`recipe-policy.json`, top-level recipe helpers and their own artifact formats.
+They are not canonical candidate producers and their outputs cannot be promoted
+by the secure loop. Removing those APIs requires either replacing their useful
+capabilities with canonical producers or explicitly retiring them; their modules
+must not be deleted as if unused. The custom recipe MinHash index and weighted
+interleaving are further replacement candidates; the secure data path already
+uses datasketch. Renaming `secure_compat` is cosmetic until this dependency split
+is resolved.
 
-## Why this is a correctness problem, not only duplication
-
-- **P0: manual candidates cannot be evaluated.** `resolver.resolve_candidate`
-  (used by `eval run --candidate`, `score`, `promote`) validates cards with
-  `artifacts.validate_run_card` and requires a structured `model` dict, a
-  canonical run id, and a successful entry in the hash-chained event log.
-  `run_training_trial` writes none of these, so the documented
-  "train → evaluate the returned id → score → promote" chain is broken. Only the
-  `loop`, which uses `train_adapter`, connects end to end.
-- **The config switch hides what ran.** `evaluation._publish_evaluation` rewrites
-  `current.json` to `secure-current.json` by filename and monkeypatches
-  `generate_cases`/`run_lm_eval` into `secure_compat` at call time. It exists
-  because the two config schemas are incompatible and the tests
-  (`tests/artifact_chain.py`, `tests/test_baseline.py`) feed the recipe schema
-  into the secure evaluator. It is load-bearing today, which is exactly why the
-  schemas must merge before it can go.
-
-## Canonical target
-
-**System B (secure) is canonical.** It is the connected, integrity-bearing path:
-canonical run ids, event chain, structured model provenance, real validators,
-and a resolver that consumes its own producer's output. System A is the earlier
-"recipe" path; its distinguishing artifacts (recipe run ids, string `model`,
-no events) are the source of the P0. Consolidation means routing System A's CLI
-verbs onto System B's producers and retiring the recipe duplicates -- not adding
-a translator between them.
-
-## Staged plan (each stage keeps the suite green and integrity PASS)
-
-1. **Config schema.** Make `config.resolve_config` accept the secure schema (or
-   convert `current.json` to it once, at the edge) so a single experiment schema
-   feeds both `train_adapter` and `run_real_evaluation`. Update the ~10 tests and
-   `tests/artifact_chain.py` that pin the recipe schema. Removing this dependency
-   is what later lets the `_publish_evaluation` filename switch disappear.
-2. **Training producer.** Route `train sft|cpt|preference` (and the three
-   `scripts/pt_train_*.py`) through the loop's single-lever producer so a manual
-   run writes a canonical, event-chained, resolver-compatible card. Delete
-   `run_training_trial` and the recipe run-card path. This closes the P0.
-   Requires a GPU end-to-end check (train → resolve → eval → score) mirroring
-   `tests/test_training_gpu.py`, because the manual real path has no coverage
-   today.
-3. **Evaluation.** Point `eval run`/`baseline` at the secure evaluator with the
-   unified schema; delete `run_real_evaluation` and the `_publish_evaluation`
-   filename switch and monkeypatch.
-4. **Scoring and frontier.** Collapse the top-level `scoring`/`frontier` defs
-   into their secure twins; keep one `create_score`, one frontier pointer.
-5. **Leaf cleanup.** Remove the now-empty top-level shims, leaving `secure_compat`
-   as the implementation and the top-level names as thin, honest imports (or move
-   `secure_compat` up and drop the package split entirely).
-
-## Verification gates
-
-Every stage: `ruff check`, `ruff format --check`, full `pytest`, and
-`scripts/check_posttrain_integrity.py` PASS on a clean tree. Stage 2 additionally
-requires a GPU run proving a manually trained candidate resolves and scores,
-since that path is currently untested — which is how the P0 survived.
-
-## Empirical findings during execution (2026-09-22)
-
-Working the plan surfaced a stronger coupling than the idealized 1→5 order assumed:
-
-- **The recipe config schema falls last, not first.** `current.json`'s recipe
-  fields exist only because the manual CLI verbs (`train`, `eval run`, `baseline`,
-  `score`) still read them. The schema cannot be removed until those verbs are
-  rerouted onto the secure producers. So the true order is reroute-then-drop, and
-  "Stage 1: config" is really the closing cleanup.
-- **Only the training reroute is GPU-gated.** Evaluation and scoring run on CPU
-  (the suite proves it via `tests/artifact_chain.py`). Rerouting `eval`/`score`
-  is CPU-verifiable; rerouting `train` (Stage 2) needs a GPU end-to-end run
-  because the manual real training path has no coverage today.
-- **Two live scorers.** Manual `score` uses top-level `scoring.score_run`
-  (compares two saved summaries); the loop uses secure `create_score`
-  (event-chained). Collapsing them is coupled to the eval reroute.
-
-### Done
-
-- **Config filename switch removed.** `evaluation._publish_evaluation` no longer
-  rewrites `current.json` to `secure-current.json` by filename; callers state the
-  config explicitly (`tests/artifact_chain.py`, `tests/test_baseline.py` updated).
-  The only remaining seam is forwarding a test-overridden `run_lm_eval` for
-  offline stubbing. Full suite green.
-
-### Handed back (GPU-gated or high-risk to land blind)
-
-- Training producer reroute (Stage 2) and the config-schema removal it unblocks.
-  These change what runs and must be verified on the target GPU, not asserted.
-
-## Execution status (2026-09-22, branch refactor/consolidate-systems)
-
-Done and CPU-green (201 passing) on the branch:
-- **3a** config filename switch removed (`81b705d`).
-- **2 (code)** manual `train sft|cpt|preference` now runs the loop's single secure
-  producer via `loop.train_one_lever`; `run_training_trial` and the three recipe
-  training scripts are gone; a latent `verify_data_manifest` signature crash in
-  the loop was fixed (`3c0bdc4`).
-- **HF alignment** `hf-transfer` is a locked dep, auto-enabled on import (`826961f`).
-
-Blocked, not done:
-- **GPU end-to-end of stage 2.** The host's egress to HuggingFace's file backend
-  stalls the client on large files (plain / hf-transfer / HF_HUB_DISABLE_XET all
-  move 0 bytes; curl gets ~8 MB/s). Deferred until the network is fixed, per
-  decision; then the HF-idiomatic path runs unchanged.
-
-Remaining structural prerequisite before a documented end-to-end run works, even
-with networking fixed:
-- **Secure data + baseline CLI entries are unwired.** `data discover` / `data
-  prepare` still forward to the recipe scripts and write a recipe manifest, but
-  `train_one_lever` (and the loop) consume the secure manifest written by
-  `secure_compat.data_pipeline.run_cli` (the `data/current.json` pointer + event
-  chain), which no CLI verb invokes. Wire `_data_discover_command` /
-  `_data_prepare_command` (and baseline) to the secure pipeline before the run.
-  This is CPU-verifiable and independent of the network.
-
-### Runbook once networking is fixed and the secure data entries are wired
-
-```bash
-uv run --locked python -m boldt_posttrain.cli data discover --real --config configs/posttrain/secure-current.json
-uv run --locked python -m boldt_posttrain.cli data prepare  --real --config configs/posttrain/secure-current.json
-uv run --locked python -m boldt_posttrain.cli baseline run  --real --allow-gpu --config configs/posttrain/secure-current.json
-uv run --locked python -m boldt_posttrain.cli train sft --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
-# train prints the candidate run id; it now resolves:
-uv run --locked python -m boldt_posttrain.cli eval run --real --allow-gpu --candidate <run_id>
-uv run --locked python -m boldt_posttrain.cli score --candidate <eval_run_id>
-```
-
-## Loop verified end to end (2026-09-22)
-
-The AutoResearch loop now runs a full round on real data + the A6000. Fixing the
-config/producer/reader/HTTP/integrity defects below was what made it run at all;
-each had no test coverage, which is why it had never executed end to end:
-
-1. `verify_data_manifest` was imported with the recipe signature but called with
-   the secure `(data_root, policy)` one — the loop crashed there.
-2. `datasketch` (near-dedup / leakage LSH) was imported but never declared, so
-   `data prepare` failed closed with ModuleNotFoundError.
-3. `_source_rows` streamed row-by-row and stalled; switched to the official
-   non-streaming `load_dataset` (bulk parquet download).
-4. `_execute_lever` loaded rows with the recipe reader (filters on schema/split
-   fields the secure manifest lacks → zero rows); switched to the secure
-   role-based reader.
-5. Manual `train` produced recipe-format run cards the resolver rejected; routed
-   through the single secure producer so candidates resolve.
-6. `resolver._fetch` hand-rolled HTTP with urllib (broke on the missing system CA);
-   replaced with `huggingface_hub`.
-7. `_integrity_check` called a nonexistent `module.check()`; composed the checker's
-   real `changed_paths()` + `evaluate()`.
-
-Verified run (`secure-current.json`, EU-Instruct-Synthetic `de`, apache-2.0):
-`data prepare` → `train sft` → resolve → candidate `eval` (294-case suite + three
-lm-eval tasks) → `score` → `integrity`. A deliberately tiny smoke candidate scored
--0.65 and the loop **rejected** it (disposition `rejected`, integrity `pass`,
-exit 1, error none) — the designed behaviour, not a crash. The smoke used reduced
-`max_steps`/`context_length`; the committed config carries the real values.
-
-The `score`→**promote** branch fires only when a candidate beats the baseline,
-which a smoke cannot; it is covered by tests (`test_promotion`,
-`test_specialist_frontier`) rather than this run.
+Tests cover the canonical CLI wiring, artifact-chain rejection and tiny-model
+training/save/reload. CUDA fixture results do not establish full Boldt training
+quality or production memory acceptance. Production acceptance still requires
+exact run IDs, artifact hashes, score IDs and event evidence on target hardware.

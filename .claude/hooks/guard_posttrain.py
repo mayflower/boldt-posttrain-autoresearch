@@ -6,6 +6,9 @@ from __future__ import annotations
 import json
 import re
 import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def allowed(document: dict) -> tuple[bool, str]:
@@ -14,29 +17,36 @@ def allowed(document: dict) -> tuple[bool, str]:
     if tool in {"Read", "Glob", "Grep"}:
         return True, "read-only tool"
     if tool in {"Edit", "Write"}:
-        path = str(tool_input.get("file_path") or tool_input.get("path") or "").replace("\\", "/")
-        editable = path in {
-            "configs/posttrain/current.json",
-            "configs/posttrain/secure-current.json",
-        } or re.fullmatch(r"configs/posttrain/experiments/[^/]+\.json", path)
+        requested = str(tool_input.get("file_path") or tool_input.get("path") or "").replace(
+            "\\", "/"
+        )
+        try:
+            path = (ROOT / requested).resolve().relative_to(ROOT).as_posix()
+        except ValueError:
+            return False, "write is outside the repository"
+        editable = (
+            path == "configs/posttrain/secure-current.json"
+            or re.fullmatch(r"configs/posttrain/experiments/[^/]+\.json", path)
+            or re.fullmatch(r"docs/experiments/[^/]+\.md", path)
+        )
         return (
             bool(editable),
             "editable experiment surface"
             if editable
-            else "writes are limited to strict experiment files",
+            else "writes are limited to strict experiment files and experiment notes",
         )
     if tool == "Bash":
         command = str(tool_input.get("command", ""))
-        if any(token in command for token in (">", "<", "|", ";", "`", "$(")):
+        if any(token in command for token in (">", "<", "|", ";", "`", "$(", "&", "\n", "\r")):
             return False, "shell composition and redirection are forbidden"
         allowed_commands = (
             # uv owns the environment; the bare interpreter form is not allowed
             # because it depends on a previously activated shell and drops
             # .venv/bin from PATH, which the merge and eval levers need.
             "uv run --locked python -m boldt_posttrain.cli ",
-            "git rev-parse HEAD",
-            "git status --short",
-            "git diff -- ",
+            "uv run --locked git rev-parse HEAD",
+            "uv run --locked git status --short",
+            "uv run --locked git diff -- ",
         )
         approved = command.startswith(allowed_commands)
         return approved, "approved command" if approved else "command is outside the allowlist"

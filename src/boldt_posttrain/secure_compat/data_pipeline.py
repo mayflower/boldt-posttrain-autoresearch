@@ -608,7 +608,14 @@ def verify_data_manifest(
     return manifest
 
 
-def prepare(policy: Policy, config_path: Path, *, rows_provider=_source_rows) -> dict[str, Any]:
+def prepare(
+    policy: Policy,
+    config_path: Path,
+    *,
+    rows_provider=_source_rows,
+    outputs_root: Path | None = None,
+) -> dict[str, Any]:
+    outputs_root = outputs_root if outputs_root is not None else OUTPUTS
     from huggingface_hub import HfApi
 
     config = config_module.load_experiment(config_path)
@@ -620,10 +627,10 @@ def prepare(policy: Policy, config_path: Path, *, rows_provider=_source_rows) ->
     language = LanguageIdentifier(policy)
     started = time.monotonic()
     run_id = new_run_id("data-prepare")
-    output_root = OUTPUTS / "data"
+    output_root = outputs_root / "data"
     staging, final = output_root / ".staging" / run_id, output_root / run_id
     staging.mkdir(parents=True)
-    events = EventLog(OUTPUTS)
+    events = EventLog(outputs_root)
     start = events.append("run_started", run_id, {"run_type": "data_prepare"})
     normalized: list[dict[str, Any]] = []
     rejections: Counter[str] = Counter()
@@ -877,14 +884,15 @@ def prepare(policy: Policy, config_path: Path, *, rows_provider=_source_rows) ->
         raise
 
 
-def run_cli(args) -> tuple[dict[str, Any], int]:
+def run_cli(args, *, outputs_root: Path | None = None) -> tuple[dict[str, Any], int]:
+    outputs_root = outputs_root if outputs_root is not None else OUTPUTS
     policy = load_policy()
     if args.data_command == "discover":
         run_id = new_run_id("data-discover")
-        staging = OUTPUTS / "data/.staging" / run_id
-        final = OUTPUTS / "data" / run_id
+        staging = outputs_root / "data/.staging" / run_id
+        final = outputs_root / "data" / run_id
         staging.mkdir(parents=True)
-        events = EventLog(OUTPUTS)
+        events = EventLog(outputs_root)
         start = events.append("run_started", run_id, {"run_type": "data_discover"})
         document = discover(policy)
         atomic_write_json(staging / "discovery.json", document)
@@ -941,4 +949,4 @@ def run_cli(args) -> tuple[dict[str, Any], int]:
             "discovery": str(final / "discovery.json"),
             "event_sequence": finish["sequence"],
         }, 0
-    return prepare(policy, ROOT / args.config), 0
+    return prepare(policy, ROOT / args.config, outputs_root=outputs_root), 0

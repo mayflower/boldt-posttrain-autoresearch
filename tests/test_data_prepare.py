@@ -484,7 +484,10 @@ def test_tampered_validation_shard_is_detected(tmp_path):
         verify_data_manifest(directory / "manifest.json", expected_policy_hash="policy")
 
 
-def test_failed_prepare_does_not_replace_existing_authoritative_artifacts(tmp_path):
+def test_failed_prepare_does_not_replace_existing_authoritative_artifacts(tmp_path, monkeypatch):
+    from boldt_posttrain import cli
+
+    monkeypatch.setattr(cli, "OUTPUTS", tmp_path)
     main = prepare_script_main()
     output = tmp_path / "data"
     output.mkdir()
@@ -498,13 +501,16 @@ def test_failed_prepare_does_not_replace_existing_authoritative_artifacts(tmp_pa
     invalid_config = tmp_path / "invalid.json"
     invalid_config.write_text("{}", encoding="utf-8")
 
-    result = main(["--config", str(invalid_config), "--out", str(output), "--real"])
+    result = main(["--config", str(invalid_config), "--real"])
 
-    assert result == 4
+    assert result == 2
     assert {name: (output / name).read_text(encoding="utf-8") for name in originals} == originals
 
 
-def test_dry_prepare_publishes_below_authoritative_directory(tmp_path):
+def test_dry_prepare_rejects_invalid_config_without_publishing(tmp_path, monkeypatch):
+    from boldt_posttrain import cli
+
+    monkeypatch.setattr(cli, "OUTPUTS", tmp_path)
     main = prepare_script_main()
     output = tmp_path / "data"
     output.mkdir()
@@ -513,6 +519,6 @@ def test_dry_prepare_publishes_below_authoritative_directory(tmp_path):
     invalid_config = tmp_path / "invalid.json"
     invalid_config.write_text("{}", encoding="utf-8")
 
-    assert main(["--config", str(invalid_config), "--out", str(output)]) == 4
+    assert main(["--config", str(invalid_config), "--dry-run"]) == 2
     assert authoritative.read_text(encoding="utf-8") == '{"status":"trainable"}\n'
-    assert (output / "dry-run/manifest.json").is_file()
+    assert not (output / "dry-run").exists()

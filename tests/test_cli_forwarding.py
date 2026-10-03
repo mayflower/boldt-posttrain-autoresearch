@@ -18,7 +18,9 @@ from boldt_posttrain import cli, loop
 TRAIN_ACTIONS = [
     pytest.param("sft", [], id="sft"),
     pytest.param("cpt", [], id="cpt"),
-    pytest.param("preference", ["--method", "dpo"], id="preference"),
+    pytest.param("preference", ["--method", "dpo"], id="dpo"),
+    pytest.param("preference", ["--method", "kto"], id="kto"),
+    pytest.param("preference", ["--method", "orpo"], id="orpo"),
 ]
 
 
@@ -45,6 +47,7 @@ def test_real_train_calls_the_single_producer_with_the_named_lever(monkeypatch, 
     )
     assert code == 0
     assert seen["lever"] == action
+    assert seen["preference_method"] == (extra[1] if extra else None)
     # Float, not int: the old int forwarding rejected the documented "90".
     assert isinstance(seen["budget_minutes"], float) and seen["budget_minutes"] == 90.0
 
@@ -88,3 +91,11 @@ def test_dry_run_is_a_preflight_and_never_trains(monkeypatch, tmp_path, capsys):
     assert called["trained"] is False
     payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert payload["mode"] == "dry_run"
+
+
+@pytest.mark.parametrize("flag", ["--device", "--out", "--data", "--mix-plan"])
+def test_unsupported_training_options_fail_instead_of_being_ignored(flag, capsys):
+    with pytest.raises(SystemExit) as rejected:
+        cli.main(["train", "sft", "--dry-run", flag, "unused"])
+    assert rejected.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err

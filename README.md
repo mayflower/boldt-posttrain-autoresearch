@@ -14,7 +14,7 @@ QLoRA profile supports a single 48-GB GPU.
 ```bash
 export CUDA_DEVICE_ORDER=FASTEST_FIRST
 export CUDA_VISIBLE_DEVICES=0
-scripts/sync_env.sh
+uv run --locked bash scripts/sync_env.sh
 uv run --locked python -m boldt_posttrain.cli policy validate
 uv run --locked python -m boldt_posttrain.cli doctor --mode all
 ```
@@ -34,9 +34,8 @@ NVIDIA RTX A6000.
 
 ## Modes
 
-Every mutating operation requires exactly one of `--dry-run` or `--real`. Discovery plans are
-written under `outputs/posttrain/plans/`; other dry runs write only explicitly labelled dry-run
-artifacts. Training and distillation additionally require
+Every mutating operation requires exactly one of `--dry-run` or `--real`. Data, evaluation and merge plans are written under `outputs/posttrain/plans/`;
+training dry runs validate prerequisites without producing candidates. Training and distillation additionally require
 `--allow-gpu --allow-checkpoints`; evaluation requires `--allow-gpu`; merge requires
 `--allow-checkpoints` and uses `--allow-gpu` for its configured GPU path. No command falls back to
 CPU, another model, another trainer, or a smaller benchmark.
@@ -44,9 +43,9 @@ CPU, another model, another trainer, or a smaller benchmark.
 ## Workflow
 
 ```bash
-uv run --locked python -m boldt_posttrain.cli data discover --real --config configs/posttrain/current.json
-uv run --locked python -m boldt_posttrain.cli data prepare --real --config configs/posttrain/current.json
-uv run --locked python -m boldt_posttrain.cli baseline run --real --allow-gpu --config configs/posttrain/current.json
+uv run --locked python -m boldt_posttrain.cli data discover --real --config configs/posttrain/secure-current.json
+uv run --locked python -m boldt_posttrain.cli data prepare --real --config configs/posttrain/secure-current.json
+uv run --locked python -m boldt_posttrain.cli baseline run --real --allow-gpu --config configs/posttrain/secure-current.json
 uv run --locked python -m boldt_posttrain.cli train sft --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
 uv run --locked python -m boldt_posttrain.cli eval run --real --allow-gpu --candidate train-sft-20260721T120000.000000Z-0123456789abcdef
 uv run --locked python -m boldt_posttrain.cli score --candidate eval-20260721T130000.000000Z-0123456789abcdef
@@ -60,15 +59,26 @@ uv run --locked python -m boldt_posttrain.cli train cpt --real --allow-gpu --all
 uv run --locked python -m boldt_posttrain.cli train preference --method dpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
 uv run --locked python -m boldt_posttrain.cli train preference --method kto --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
 uv run --locked python -m boldt_posttrain.cli train preference --method orpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
-uv run --locked python -m boldt_posttrain.cli distill --teacher mayflowergmbh/boldt-dc-1b-german-it-16k-dpo@a24720616fc0ae0d0e8d2009d1c4eddec56fd15c --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
-uv run --locked python -m boldt_posttrain.cli merge search --real --allow-gpu --allow-checkpoints --config configs/posttrain/current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train grpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train rlvr --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train opd --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train sdpo --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli train sdft --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli merge search --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --budget-minutes 90
 ```
+
+Before running another lever, configure its data and parameters in the strict secure config.
+GRPO/RLVR need verified rows, SDPO needs feedback, SDFT needs demonstrations, and OPD needs
+a distinct, licensed teacher at an exact revision. `distill` aliases online OPD.
+Merge inputs must name exact, scored candidate run IDs in the config.
 
 One deterministic experiment round:
 
 ```bash
-uv run --locked python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247 --budget-minutes 90
+uv run --locked python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --base-ref fb30e8228539d2dc76a9b4ce10813aa3f4268247 --budget-minutes 90 --promote
 ```
+
+`status` and `report` return verified JSON from the canonical event chain and pointers.
 
 ## Trust Model
 

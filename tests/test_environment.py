@@ -63,8 +63,9 @@ def test_operative_surface_has_no_conda_dependency():
 
 
 def test_hooks_do_not_depend_on_an_activated_interpreter():
-    # NixOS provides python3, never a bare `python`; only an activated venv does.
-    # A hook that shells out to `python` would block every tool call there.
+    # uv supplies the locked interpreter and PATH even on hosts without bare python.
     settings = (ROOT / ".claude/settings.json").read_text(encoding="utf-8")
     assert '"command": "python ' not in settings
-    assert "python3 " in settings
+    assert '"command": "uv run --locked python ' in settings
+    welcome = (ROOT / ".claude/hooks/pt_welcome.sh").read_text(encoding="utf-8")
+    assert "uv run --locked python " in welcome
