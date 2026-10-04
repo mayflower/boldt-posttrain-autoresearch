@@ -1,6 +1,11 @@
 """run_experiment's pass/promote/reject branches, with the heavy stages mocked."""
 
+from types import SimpleNamespace
+
+import pytest
+
 from boldt_posttrain import loop, provenance
+from boldt_posttrain.frontier import FrontierNotImproved
 from boldt_posttrain.resolver import ResolvedModelRef
 
 
@@ -18,21 +23,28 @@ def _resolved() -> ResolvedModelRef:
     )
 
 
-def _wire(monkeypatch, tmp_path, *, score_status: str):
+def _wire(monkeypatch, tmp_path, *, score_status: str, baseline_seconds: float = 60.0):
     """Mock every heavy stage so only run_experiment's branching runs."""
-    calls = {"promote": 0}
+    calls = {"promote": 0, "lever_deadline": None}
     monkeypatch.setattr(loop, "load_policy", lambda: object())
     monkeypatch.setattr(
         loop.config_module, "load_experiment", lambda _p: type("C", (), {"document": {}})()
     )
     monkeypatch.setattr(provenance, "resolve_base_ref", lambda ref, root: ref)
-    monkeypatch.setattr(loop, "load_baseline", lambda *a, **k: object())
-    monkeypatch.setattr(loop, "verify_data_manifest", lambda *a, **k: {"status": "trainable"})
     monkeypatch.setattr(
         loop,
-        "_execute_lever",
-        lambda *a, **k: {"run_id": _resolved().source_run_id, "status": "succeeded"},
+        "load_baseline",
+        lambda *a, **k: SimpleNamespace(
+            run_card={"run_id": "baseline-1", "duration_seconds": baseline_seconds}
+        ),
     )
+    monkeypatch.setattr(loop, "verify_data_manifest", lambda *a, **k: {"status": "trainable"})
+
+    def _lever(*a, deadline, **k):
+        calls["lever_deadline"] = deadline
+        return {"run_id": _resolved().source_run_id, "status": "succeeded"}
+
+    monkeypatch.setattr(loop, "_execute_lever", _lever)
     monkeypatch.setattr(loop, "resolve_model", lambda *a, **k: _resolved())
     monkeypatch.setattr(loop, "_publish_evaluation", lambda *a, **k: {"run_id": "eval-1"})
     monkeypatch.setattr(
@@ -102,3 +114,46 @@ def test_rejected_candidate_never_promotes(monkeypatch, tmp_path):
     assert verdict["status"] == "rejected"
     assert verdict["disposition"] == "rejected"
     assert calls["promote"] == 0
+
+
+def _run(tmp_path, *, budget_minutes=90, promote=True):
+    return loop.run_experiment(
+        config_path=tmp_path / "exp.json",
+        base_ref="HEAD",
+        budget_minutes=budget_minutes,
+        promote=promote,
+        allow_checkpoints=True,
+        allow_gpu=True,
+        outputs_root=tmp_path / "outputs",
+        repository_root=tmp_path,
+    )
+
+
+def test_candidate_that_does_not_beat_the_champion_is_a_normal_rejection(monkeypatch, tmp_path):
+    _wire(monkeypatch, tmp_path, score_status="passed")
+
+    def _not_better(*a, **k):
+        raise FrontierNotImproved(0.5, {"candidate_run_id": "champion", "score": 0.7})
+
+    monkeypatch.setattr(loop, "promote_candidate", _not_better)
+    verdict, code = _run(tmp_path)
+    assert code == 1
+    assert verdict["status"] == "rejected" and verdict["disposition"] == "not_promoted"
+    assert "does not beat the champion" in verdict["stages"]["promotion"]["reason"]
+    assert verdict["error"] is None
+
+
+def test_training_stops_early_enough_to_leave_time_for_evaluation(monkeypatch, tmp_path):
+    calls = _wire(monkeypatch, tmp_path, score_status="rejected", baseline_seconds=600.0)
+    started = loop.time.monotonic()
+    _run(tmp_path, budget_minutes=90)
+    reserve = loop.evaluation_reserve_seconds(600.0)
+    assert reserve == pytest.approx(1020.0)
+    assert calls["lever_deadline"] == pytest.approx(started + 90 * 60 - reserve, abs=5)
+
+
+def test_budget_without_room_for_training_fails_before_training(monkeypatch, tmp_path):
+    calls = _wire(monkeypatch, tmp_path, score_status="passed", baseline_seconds=1500.0)
+    verdict, code = _run(tmp_path, budget_minutes=45)
+    assert code == 4 and calls["lever_deadline"] is None
+    assert "raise --budget-minutes" in verdict["error"]

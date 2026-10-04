@@ -130,7 +130,9 @@ def _baseline_model(policy: Policy) -> ResolvedModelRef:
     )
 
 
-def complete_chain(tmp_path: Path, monkeypatch, *, improvement: float = 0.1) -> dict:
+def complete_chain(
+    tmp_path: Path, monkeypatch, *, improvement: float = 0.1, english_bleed: bool = False
+) -> dict:
     import boldt_posttrain.evaluation as evaluation
 
     repository = initialized_repository(tmp_path / "repo")
@@ -156,7 +158,8 @@ def complete_chain(tmp_path: Path, monkeypatch, *, improvement: float = 0.1) -> 
                     "validator_detail": {
                         "empty": False,
                         "refusal": False,
-                        "english_bleed": False,
+                        "english_bleed": english_bleed
+                        and case["category"] == "german_language_retention",
                     },
                     "error": None,
                 }

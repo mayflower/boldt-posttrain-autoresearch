@@ -54,7 +54,8 @@ remains with the agent.
 
 ## Command reference
 
-Prerequisites (produce the secure data manifest and the immutable baseline once):
+Prerequisites (the data manifest and the baseline must verify under the current policy;
+`status` reports both under `readiness` with the next command):
 
 ```bash
 uv run --locked python -m boldt_posttrain.cli data prepare --real --config configs/posttrain/secure-current.json

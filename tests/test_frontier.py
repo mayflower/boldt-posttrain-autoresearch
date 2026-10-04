@@ -86,3 +86,21 @@ def test_stale_frontier_hash_rejects_second_promotion(tmp_path: Path, monkeypatc
             repository_root=chain["repository"],
             integrity_checker=passing_integrity,
         )
+
+
+def test_gates_compare_against_the_baseline_not_absolute_targets(tmp_path: Path, monkeypatch):
+    # Both models bleed English on every language case, far above any absolute target.
+    chain = complete_chain(tmp_path, monkeypatch, improvement=0.1, english_bleed=True)
+    result = create_score(
+        chain["candidate_eval_run_id"],
+        policy=chain["policy"],
+        outputs_root=chain["outputs"],
+        repository_root=chain["repository"],
+    )
+    score = json.loads(
+        (chain["outputs"] / "scores" / result["score_run_id"] / "score.json").read_text()
+    )
+    assert score["deltas"]["english_bleed_rate"] == 0.0
+    assert score["gates"]["english_bleed"] is True
+    assert score["penalties"]["english_bleed"] == 0.0
+    assert result["status"] == "passed"

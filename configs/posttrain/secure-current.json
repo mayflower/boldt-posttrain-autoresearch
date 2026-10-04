@@ -22,7 +22,7 @@
     "method": "qlora",
     "learning_rate": 1e-05,
     "num_train_epochs": 1.0,
-    "max_steps": 1000,
+    "max_steps": 45,
     "warmup_ratio": 0.03,
     "per_device_batch_size": 1,
     "gradient_accumulation_steps": 16,

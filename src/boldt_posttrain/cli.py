@@ -331,6 +331,33 @@ def _integrity_command(args):
     return _script("check_posttrain_integrity", argv)
 
 
+def _report_command(args: argparse.Namespace) -> int:
+    """Render the human-readable report of one exact loop round from its artifacts."""
+    from .artifacts import RUN_ID_RE, EventLog, sha256_file
+    from .report import render_loop_report
+
+    if not RUN_ID_RE.fullmatch(args.loop):
+        print(json.dumps({"status": "failed", "error": "--loop must be an exact loop run ID"}))
+        return 2
+    verdict_path = OUTPUTS / "loops" / args.loop / "verdict.json"
+    if not verdict_path.is_file():
+        print(json.dumps({"status": "failed", "error": f"no verdict for loop {args.loop}"}))
+        return 3
+    events = EventLog(OUTPUTS)
+    anchored = any(
+        event.get("run_id") == args.loop
+        and event.get("payload", {}).get("verdict_sha256") == sha256_file(verdict_path)
+        for event in (json.loads(line) for line in events.log_path.read_text().splitlines())
+    )
+    report = render_loop_report(
+        json.loads(verdict_path.read_text()), policy=load_policy(), outputs_root=OUTPUTS
+    )
+    if not anchored:
+        report = "> WARNING: this verdict has no matching event-chain anchor.\n\n" + report
+    print(report, end="")
+    return 0
+
+
 def _status_command(_args):
     from .runtime_cli import status
 
@@ -464,6 +491,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = commands.add_parser("status")
     status.set_defaults(handler=_status_command)
+    report = commands.add_parser("report")
+    report.add_argument("--loop", required=True, help="exact loop run ID")
+    report.set_defaults(handler=_report_command)
     integrity = commands.add_parser("integrity")
     integrity_sub = integrity.add_subparsers(dest="action", required=True)
     integrity_check = integrity_sub.add_parser("check")

@@ -214,6 +214,44 @@ class DeadlineCallback(TrainerCallback):
         return control
 
 
+class ProgressCallback(TrainerCallback):
+    """Report step, loss, learning rate and remaining time about once a minute."""
+
+    def __init__(self, label: str, every_seconds: float = 60.0):
+        self.label = label
+        self.every_seconds = every_seconds
+        self.started = 0.0
+        self.last = 0.0
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        from .report import progress
+
+        self.started = self.last = time.monotonic()
+        progress(f"{self.label}: training started, {state.max_steps} optimizer steps planned")
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        from .report import duration, progress
+
+        now = time.monotonic()
+        if not logs or "loss" not in logs:
+            return
+        if now - self.last < self.every_seconds and state.global_step < state.max_steps:
+            return
+        self.last = now
+        elapsed = now - self.started
+        steps = max(state.global_step, 1)
+        remaining = elapsed / steps * max(state.max_steps - state.global_step, 0)
+        details = ", ".join(
+            f"{key} {logs[key]:.4g}"
+            for key in ("loss", "learning_rate", "grad_norm")
+            if key in logs
+        )
+        progress(
+            f"{self.label}: step {state.global_step}/{state.max_steps}, {details}, "
+            f"elapsed {duration(elapsed)}, about {duration(remaining)} left"
+        )
+
+
 def _completion_outcome(callback: DeadlineCallback) -> tuple[str, str]:
     """A saved, reload-verified checkpoint succeeds even at the budget boundary."""
     return "succeeded", "budget_limit" if callback.exhausted else "max_steps"
@@ -343,6 +381,7 @@ def train_adapter(
         bf16=device != "cpu",
         gradient_checkpointing=experiment["gradient_checkpointing"],
         max_length=experiment["context_length"],
+        include_num_input_tokens_seen="non_padding",
         packing=experiment["packing"],
         dataset_text_field="text" if kind == "cpt" else "text",
         assistant_only_loss=experiment["assistant_only_loss"] if kind == "sft" else False,
@@ -355,7 +394,7 @@ def train_adapter(
         train_dataset=dataset,
         processing_class=tokenizer,
         peft_config=lora,
-        callbacks=[callback],
+        callbacks=[callback, ProgressCallback(run_type)],
     )
     # The command names one CUDA device explicitly. Prevent Trainer from
     # silently wrapping the model across every visible (possibly mixed-

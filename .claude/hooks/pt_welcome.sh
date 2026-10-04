@@ -5,13 +5,14 @@ import json
 print(json.dumps({"systemMessage": """PostTrain AutoResearch — Boldt DC 1B German
 
 Read AGENTS.md, configs/posttrain/policy.json and AUTORESEARCH_POSTTRAIN.md.
-/pt-orient         validate policy and inspect verified state
-/pt-data dry       plan secure discovery/preparation
-/pt-baseline dry   plan the immutable seed baseline
-/pt-run 1 real     run one configured experiment through evaluation and scoring
+/pt-orient            readiness and the next command
+/pt-data real         discover and prepare verified training data
+/pt-baseline real     create or rebuild the seed baseline (GPU)
+/pt-seqkd real        optional: Qwen3.8 teacher answers for the seqkd lever (GPU, 2-3 h)
+/pt-run <n> real      n serial research rounds: train, evaluate, score, promote
+/pt-status            verified status, frontier and rounds
+/pt-report <loop-id>  report of one round: settings, metrics, gates, decision
 
-Choose one lever in secure-current.json. Online distillation uses current student
-rollouts; OPD requires a distinct licensed teacher. Stop on technical or integrity
-failure. Real runs require explicit GPU/checkpoint permission and prerequisites.
+Stop on technical or integrity failure. Real runs require explicit GPU/checkpoint permission.
 """}))
 PYWELCOME

@@ -427,12 +427,13 @@ def train_online_candidate(
 
     from . import provenance
     from .training import (
+        ProgressCallback,
         collect_model_metadata,
         create_model_and_tokenizer,
         validate_target_modules,
         validate_tokenizer,
+        warmup_steps_from_ratio,
     )
-    from .training import warmup_steps_from_ratio
 
     if not torch.cuda.is_available():
         raise RuntimeError("online candidate training requires CUDA; CPU fallback is forbidden")
@@ -589,7 +590,7 @@ def train_online_candidate(
                 eval_dataset=Dataset.from_list(validation_rows),
                 args=args,
                 journal=journal,
-                callbacks=[OnlineStepCallback()],
+                callbacks=[OnlineStepCallback(), ProgressCallback(f"train_{method}")],
             )
         elif method == "opd":
             args = GKDConfig(
@@ -612,7 +613,7 @@ def train_online_candidate(
                 args=args,
                 settings=settings,
                 journal=journal,
-                callbacks=[OnlineStepCallback()],
+                callbacks=[OnlineStepCallback(), ProgressCallback(f"train_{method}")],
             )
         else:
             args = TrainingArguments(**common)
@@ -629,7 +630,7 @@ def train_online_candidate(
                 args=args,
                 settings=settings,
                 journal=journal,
-                callbacks=[OnlineStepCallback()],
+                callbacks=[OnlineStepCallback(), ProgressCallback(f"train_{method}")],
             )
         trainer.model.is_parallelizable = True
         trainer.model.model_parallel = True

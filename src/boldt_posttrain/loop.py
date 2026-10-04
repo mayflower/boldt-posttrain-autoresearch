@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from . import config as config_module
 from .artifacts import RUN_ID_RE, EventLog, atomic_write_json, new_run_id, sha256_file
@@ -15,6 +15,7 @@ from .training import load_manifest_rows
 from .distillation import _teacher_license
 from .evaluation import _publish_evaluation
 from .frontier import (
+    FrontierNotImproved,
     _integrity_check,
     current_frontier_hash,
     frontier_status,
@@ -26,6 +27,14 @@ from .online_training import train_online_candidate
 from .policy import Policy, load_policy
 from .preference import _manifest_rows, train_preference_adapter
 from .resolver import OUTPUTS, resolve_model
+from .report import (
+    duration,
+    experiment_snapshot,
+    progress,
+    render_loop_report,
+    score_lines,
+    training_summary,
+)
 from .scoring import create_score, load_baseline
 from .seqkd import validate_seqkd_policy, verify_generation
 from .training import train_adapter
@@ -243,6 +252,10 @@ def train_one_lever(
         manifest = verify_data_manifest(
             outputs_root / "data", policy, repository_root=repository_root
         )
+        progress(
+            f"manual {lever} training on data manifest {manifest['run_id']}: "
+            f"{training_summary(config.document['training'])}"
+        )
         previous_runs = {
             path.parent.name for path in (outputs_root / "runs").glob("*/run_card.json")
         }
@@ -265,7 +278,40 @@ def train_one_lever(
     if result.get("status") != "succeeded":
         return {"status": result.get("status", "failed"), "run_id": run_id}, 4
     resolve_model(policy=policy, candidate=run_id, outputs_root=outputs_root)
+    metrics = result.get("metrics", {})
+    progress(
+        f"manual {lever} training finished: candidate {run_id}"
+        + (
+            f", {metrics.get('steps_completed')} steps, loss {metrics.get('train_loss', 0):.4f}"
+            if metrics
+            else ""
+        )
+    )
     return {"status": "succeeded", "run_id": run_id, "candidate": run_id}, 0
+
+
+# Evaluation reuses the baseline's suite on a same-sized model; adapter inference measured
+# about 1.25x the baseline's duration, so reserve 1.5x plus scoring/integrity time.
+EVALUATION_RESERVE_FACTOR = 1.5
+EVALUATION_RESERVE_FIXED_SECONDS = 120.0
+MINIMUM_TRAINING_SECONDS = 600.0
+
+
+def evaluation_reserve_seconds(baseline_duration_seconds: float) -> float:
+    return (
+        EVALUATION_RESERVE_FACTOR * float(baseline_duration_seconds)
+        + EVALUATION_RESERVE_FIXED_SECONDS
+    )
+
+
+def _note(build: Callable[[], str | list[str]]) -> None:
+    """Emit progress built lazily; a reporting failure never changes a verdict."""
+    try:
+        message = build()
+    except Exception as exc:  # noqa: BLE001
+        message = f"(progress unavailable: {type(exc).__name__}: {exc})"
+    for line in [message] if isinstance(message, str) else message:
+        progress(line)
 
 
 def run_experiment(
@@ -300,10 +346,22 @@ def run_experiment(
     try:
         policy = load_policy()
         config = config_module.load_experiment(config_path)
+        try:
+            verdict["experiment"] = experiment_snapshot(config.document)
+        except (KeyError, TypeError):
+            pass
+        experiment = config.document.get("experiment", {})
+        _note(
+            lambda: [
+                f"round {loop_id}: lever {experiment['lever']} ({experiment['name']}), "
+                f"budget {duration(budget_minutes * 60)}",
+                f"hypothesis: {experiment['hypothesis']}",
+            ]
+        )
         from . import provenance
 
         provenance.resolve_base_ref(base_ref, root=repository_root)
-        load_baseline(
+        baseline = load_baseline(
             outputs_root / "baseline",
             policy,
             outputs_root=outputs_root,
@@ -314,6 +372,25 @@ def run_experiment(
             policy,
             repository_root=repository_root,
         )
+        reserve = evaluation_reserve_seconds(baseline.run_card["duration_seconds"])
+        training_deadline = deadline - reserve
+        if training_deadline - time.monotonic() < MINIMUM_TRAINING_SECONDS:
+            raise LoopError(
+                f"budget {duration(budget_minutes * 60)} leaves under "
+                f"{duration(MINIMUM_TRAINING_SECONDS)} for training after reserving "
+                f"{duration(reserve)} for evaluation; raise --budget-minutes"
+            )
+        _note(
+            lambda: [
+                f"prerequisites verified: baseline {baseline.run_card['run_id']}, "
+                f"data manifest {manifest['run_id']}",
+                f"budget: {duration(training_deadline - time.monotonic())} for training, "
+                f"{duration(reserve)} reserved for evaluation and scoring "
+                f"(baseline evaluation took {duration(baseline.run_card['duration_seconds'])})",
+                f"training ({experiment['lever']}): "
+                f"{training_summary(config.document['training'])}",
+            ]
+        )
         previous_runs = {
             path.parent.name for path in (outputs_root / "runs").glob("*/run_card.json")
         }
@@ -321,7 +398,7 @@ def run_experiment(
             config,
             policy,
             manifest,
-            deadline=deadline,
+            deadline=training_deadline,
             outputs_root=outputs_root,
             repository_root=repository_root,
             allow_checkpoints=allow_checkpoints,
@@ -339,6 +416,21 @@ def run_experiment(
                 outputs_root=outputs_root,
             )
             verdict["stages"]["lever"] = lever_result
+            metrics = lever_result.get("metrics") or {}
+            _note(
+                lambda: [
+                    f"training finished: candidate {candidate_run_id}"
+                    + (
+                        f", {metrics['steps_completed']} steps, loss "
+                        f"{metrics['train_loss']:.4f}, stop {metrics['stop_reason']}, "
+                        f"{duration(metrics['wall_clock_seconds'])}"
+                        if metrics
+                        else ""
+                    ),
+                    "evaluating candidate on the protected suite, "
+                    f"{duration(max(0.0, deadline - time.monotonic()))} of budget left",
+                ]
+            )
             eval_result = _publish_evaluation(
                 resolved=resolved,
                 policy=policy,
@@ -364,6 +456,33 @@ def run_experiment(
             if score_result["score_run_id"] in previous_scores:
                 raise LoopError("loop attempted to reuse a previous score artifact")
             verdict["stages"]["scoring"] = score_result
+            _note(
+                lambda: (
+                    f"score {score_result['score_run_id']}: "
+                    f"{score_result['score']:+.3f} ({score_result['status']})"
+                )
+            )
+            _note(
+                lambda: [
+                    f"gate failed: {line}"
+                    for line in score_lines(
+                        json.loads(
+                            (
+                                outputs_root
+                                / "scores"
+                                / score_result["score_run_id"]
+                                / "score.json"
+                            ).read_text()
+                        ),
+                        policy,
+                        json.loads(
+                            (
+                                outputs_root / "evals" / eval_result["run_id"] / "summary.json"
+                            ).read_text()
+                        )["metrics"],
+                    )
+                ]
+            )
             verdict["candidate_run_id"] = candidate_run_id
             verdict["candidate_eval_run_id"] = eval_result["run_id"]
             verdict["score_run_id"] = score_result["score_run_id"]
@@ -372,18 +491,30 @@ def run_experiment(
             )
             integrity = _integrity_check(base_ref, repository_root, policy)
             verdict["stages"]["integrity"] = integrity
+            _note(lambda: f"integrity: {integrity['status']}")
             if score_result["status"] == "passed" and promote:
-                promotion = promote_candidate(
-                    candidate_run_id,
-                    base_ref=base_ref,
-                    expected_current_sha256=current_frontier_hash(outputs_root / "frontier"),
-                    policy=policy,
-                    outputs_root=outputs_root,
-                    repository_root=repository_root,
-                )
-                verdict["stages"]["promotion"] = promotion
-                verdict.update(status="promoted", disposition="promoted")
-                exit_code = 0
+                try:
+                    promotion = promote_candidate(
+                        candidate_run_id,
+                        base_ref=base_ref,
+                        expected_current_sha256=current_frontier_hash(outputs_root / "frontier"),
+                        policy=policy,
+                        outputs_root=outputs_root,
+                        repository_root=repository_root,
+                    )
+                except FrontierNotImproved as exc:
+                    # A valid result, not a technical failure: the round beat the baseline
+                    # but not the champion, so the series continues.
+                    reason = str(exc)
+                    verdict["stages"]["promotion"] = {"status": "not_promoted", "reason": reason}
+                    verdict.update(status="rejected", disposition="not_promoted")
+                    _note(lambda: f"not promoted: {reason}")
+                    exit_code = 1
+                else:
+                    verdict["stages"]["promotion"] = promotion
+                    verdict.update(status="promoted", disposition="promoted")
+                    _note(lambda: f"promoted: {candidate_run_id} is the new champion")
+                    exit_code = 0
             elif score_result["status"] == "passed":
                 verdict["status"] = "succeeded"
                 exit_code = 0
@@ -392,11 +523,23 @@ def run_experiment(
                 exit_code = 1
     except Exception as exc:
         verdict.update(status="failed", disposition=None, error=f"{type(exc).__name__}: {exc}")
+        progress(f"round failed: {verdict['error']}")
         exit_code = 4
     verdict["duration_seconds"] = time.monotonic() - started
     verdict["remaining_seconds"] = max(0.0, deadline - time.monotonic())
     verdict["finished_at"] = (
         __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+    )
+    try:
+        report = render_loop_report(verdict, policy=load_policy(), outputs_root=outputs_root)
+        loop_dir.mkdir(parents=True, exist_ok=True)
+        (loop_dir / "report.md").write_text(report, encoding="utf-8")
+        verdict["report"] = str(loop_dir / "report.md")
+    except Exception as exc:  # noqa: BLE001 -- a report failure never changes the verdict
+        progress(f"report rendering failed: {type(exc).__name__}: {exc}")
+    progress(
+        f"round {verdict['status']} after {duration(verdict['duration_seconds'])}"
+        + (f"; report {verdict['report']}" if verdict.get("report") else "")
     )
     atomic_write_json(loop_dir / "verdict.json", verdict)
     events.append(
@@ -481,4 +624,44 @@ def verified_status(
             repository_root=repository_root,
         )["frontier"],
         "legacy_or_unverified": sorted(set(unverified)),
+        "readiness": readiness(policy, outputs_root=outputs_root, repository_root=repository_root),
+    }
+
+
+def readiness(
+    policy: Policy, *, outputs_root: Path = OUTPUTS, repository_root: Path = ROOT
+) -> dict[str, Any]:
+    """Whether the loop prerequisites verify under the current policy, and what is next."""
+
+    def check(verify) -> dict[str, Any]:
+        try:
+            return {"status": "ok", "run_id": verify()}
+        except Exception as exc:  # noqa: BLE001 -- report, never raise from status
+            return {"status": "invalid", "error": f"{type(exc).__name__}: {exc}"}
+
+    data = check(
+        lambda: verify_data_manifest(
+            outputs_root / "data", policy, repository_root=repository_root
+        )["run_id"]
+    )
+    baseline = check(
+        lambda: load_baseline(
+            outputs_root / "baseline",
+            policy,
+            outputs_root=outputs_root,
+            repository_root=repository_root,
+        ).run_card["run_id"]
+    )
+    next_command = (
+        "/pt-data real"
+        if data["status"] != "ok"
+        else "/pt-baseline real"
+        if baseline["status"] != "ok"
+        else "/pt-run <rounds> real"
+    )
+    return {
+        "loop_ready": data["status"] == "ok" and baseline["status"] == "ok",
+        "data_manifest": data,
+        "baseline": baseline,
+        "next_command": next_command,
     }

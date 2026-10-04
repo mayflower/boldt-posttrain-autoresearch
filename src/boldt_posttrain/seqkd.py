@@ -376,6 +376,13 @@ def generate(
     run_staging, run_final = outputs_root / "runs/.staging" / run_id, outputs_root / "runs" / run_id
     events = EventLog(outputs_root)
     start = events.append("run_started", run_id, {"run_type": "seqkd_generate"})
+    from .report import duration, progress
+
+    progress(
+        f"seqkd: {len(selected)} prompts from {prompt_manifest['run_id']}, teacher "
+        f"{entry['repo_id']}@{entry['revision'][:12]}, temperature {settings['temperature']}, "
+        f"max {settings['max_new_tokens']} new tokens"
+    )
     try:
         generation_started = time.monotonic()
         generations = generator(
@@ -385,6 +392,11 @@ def generate(
             max_model_len=max_model_len,
         )
         generation_seconds = time.monotonic() - generation_started
+        produced = sum(int(item.get("completion_tokens", 0)) for item in generations)
+        progress(
+            f"seqkd: {len(generations)} answers, {produced} tokens in "
+            f"{duration(generation_seconds)} ({produced / max(generation_seconds, 1e-9):.0f} tokens/s)"
+        )
         rows, rejections, confidences = build_rows(
             selected, generations, language=language, teacher=entry
         )
@@ -394,6 +406,12 @@ def generate(
             raise SeqKDError("benchmark leakage detected in teacher answers")
         if not clean:
             raise SeqKDError("no teacher answer survived the policy filters")
+        progress(
+            f"seqkd: {len(clean)} trainable rows; rejected "
+            + (", ".join(f"{k} {v}" for k, v in sorted(rejections.items())) or "none")
+            + f"; dedup removed {dedup_stats['exact_removed'] + dedup_stats['near_removed']}"
+            "; leakage clean"
+        )
         completion_tokens = sum(int(item.get("completion_tokens", 0)) for item in generations)
         staging.mkdir(parents=True)
         shard = staging / SHARD_NAME

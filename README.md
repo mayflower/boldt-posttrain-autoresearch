@@ -52,11 +52,13 @@ orientation with the next steps.
 ### A typical session
 
 ```text
-/pt-orient          validate the policy, show verified status, name the next exact command (read-only)
-/pt-data dry        plan data discovery and preparation; then /pt-data real (once)
-/pt-baseline real   create the immutable seed baseline (once, GPU)
+/pt-orient          readiness (data manifest, baseline) and the next command (read-only)
+/pt-data real       discover and prepare verified training data
+/pt-baseline real   create the seed baseline, or rebuild one that no longer verifies (GPU)
+/pt-seqkd real      optional: teacher answers for the seqkd lever (GPU, 2-3 h)
 /pt-run 3 real      let the agent run up to 3 serial research rounds
-/pt-status          verified status and frontier
+/pt-status          verified status, frontier and rounds
+/pt-report <id>     report of one round: settings, training, metrics with CIs, gates, decision
 ```
 
 What `/pt-run N real` does per round: Claude Code captures the base Git ref once, writes its
@@ -68,7 +70,12 @@ hypothesis and exactly one lever (`sft`, `cpt`, `preference`, `grpo`, `rlvr`, `o
 uv run --locked python -m boldt_posttrain.cli loop run --real --allow-gpu --allow-checkpoints --config configs/posttrain/secure-current.json --base-ref "$BASE_REF" --budget-minutes 90 --promote
 ```
 
-It then reads the verdict and starts the next round. It stops after N rounds, on any technical or
+While a round runs, timestamped progress lines on stderr show the stage, the applied training
+settings, training step/loss/ETA, evaluation progress, lm-eval results, the score and every failed
+gate. Each round writes `outputs/posttrain/loops/<loop-id>/report.md`, and
+`pt report --loop <loop-id>` renders the same report for any round. The agent explains each
+hypothesis before a round, summarizes the report afterwards and keeps that summary in
+`docs/experiments/<loop-id>.md`. It then starts the next round. It stops after N rounds, on any technical or
 integrity failure (nonzero exit), or after two consecutive rounds without a passing improvement.
 
 Further commands for single steps:

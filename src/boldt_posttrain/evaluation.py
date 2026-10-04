@@ -303,10 +303,24 @@ def generate_cases(
     model, tokenizer = load_transformers_model(resolved, device=device)
     if not tokenizer.chat_template:
         raise EvaluationError("resolved tokenizer has no chat template")
+    from .report import duration, progress
+
     random.seed(42)
     torch.manual_seed(42)
     records: list[dict[str, Any]] = []
-    for case in cases:
+    cases = list(cases)
+    started = last_report = time.monotonic()
+    progress(f"evaluation: {len(cases)} cases, greedy decoding with the seed chat template")
+    for index, case in enumerate(cases, 1):
+        now = time.monotonic()
+        if index > 1 and (now - last_report >= 60 or index == len(cases)):
+            last_report = now
+            done = index - 1
+            mean = sum(float(item.get("score", 0.0)) for item in records) / done
+            progress(
+                f"evaluation: {done}/{len(cases)} cases, mean score {mean:.3f}, "
+                f"about {duration((now - started) / done * (len(cases) - done))} left"
+            )
         if deadline is not None and time.monotonic() >= deadline:
             raise EvaluationError("evaluation budget exhausted at case boundary")
         record: dict[str, Any] = {
@@ -548,6 +562,29 @@ def summarize(
     return metrics, per_case
 
 
+def _baseline_stale_reason(
+    baseline_root: Path, policy: Policy, repository_root: Path
+) -> str | None:
+    """Why the current baseline no longer verifies, or None while it still does.
+
+    A baseline bound to an older policy, suite or artifact set protects nothing, so it may
+    be replaced without --replace-baseline; a verifying baseline may not.
+    """
+    # Local import: scoring imports this module.
+    from .scoring import load_baseline
+
+    try:
+        load_baseline(
+            baseline_root,
+            policy,
+            outputs_root=baseline_root.parent,
+            repository_root=repository_root,
+        )
+    except Exception as exc:  # noqa: BLE001 -- any verification failure makes it untrusted
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
 def _publish_evaluation(
     *,
     resolved: ResolvedModelRef,
@@ -573,8 +610,16 @@ def _publish_evaluation(
         )
         if not fingerprints_match:
             raise EvaluationError("baseline must use the exact protected seed model")
-    if baseline and (output_root / "current.json").exists() and not replace_baseline:
-        raise EvaluationError("a baseline already exists; --replace-baseline is required")
+    supersedes = None
+    if baseline and (output_root / "current.json").exists():
+        stale_reason = _baseline_stale_reason(output_root, policy, repository_root)
+        if stale_reason is None and not replace_baseline:
+            raise EvaluationError("a valid baseline already exists; --replace-baseline is required")
+        previous = json.loads((output_root / "current.json").read_text(encoding="utf-8"))
+        supersedes = {
+            "run_id": previous.get("run_id"),
+            "reason": stale_reason or "explicit --replace-baseline",
+        }
     run_id = new_run_id("baseline" if baseline else "eval")
     staging = output_root / ".staging" / run_id
     final = output_root / run_id
@@ -595,6 +640,9 @@ def _publish_evaluation(
         config = config_module.load_experiment(config_path)
         (staging / "lm_eval").mkdir()
         lm_eval_kwargs = {"deadline": deadline} if deadline is not None else {}
+        from .report import progress
+
+        progress(f"lm-eval: {', '.join(policy.document['evaluation']['lm_eval_tasks'])}")
         lm_scores = run_lm_eval(
             resolved,
             policy,
@@ -602,6 +650,9 @@ def _publish_evaluation(
             output_dir=staging / "lm_eval",
             batch_size=config.document["evaluation"]["batch_size"],
             **lm_eval_kwargs,
+        )
+        progress(
+            "lm-eval: " + ", ".join(f"{task} {value:.3f}" for task, value in lm_scores.items())
         )
         metrics, per_case = summarize(records, lm_scores)
         atomic_write_json(staging / "model_ref.json", resolved.to_dict())
@@ -690,6 +741,7 @@ def _publish_evaluation(
             "data": {
                 "suite_hash": summary["suite_hash"],
                 "task_revisions": summary["task_revisions"],
+                **({"supersedes_baseline": supersedes} if supersedes else {}),
             },
             "parameters": policy.document["evaluation"]["decoding"],
             "hardware": provenance.collect_hardware(),
@@ -737,6 +789,7 @@ def _publish_evaluation(
             "run_id": run_id,
             "summary": str(final / "summary.json"),
             "event_sequence": finish_head["sequence"],
+            **({"supersedes_baseline": supersedes} if supersedes else {}),
         }
     except Exception:
         events.append("run_finished", run_id, {"status": "failed"})

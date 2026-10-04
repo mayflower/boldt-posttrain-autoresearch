@@ -11,4 +11,4 @@ uv run --locked python -m boldt_posttrain.cli eval validate-suite
 uv run --locked python -m boldt_posttrain.cli eval catalog
 ```
 
-Real baseline and candidate evaluation require explicit GPU permission. Baselines are immutable and `baseline/current.json` is replaced only with `--replace-baseline`.
+Real baseline and candidate evaluation require explicit GPU permission. Baselines are immutable. `baseline run` creates the first one and rebuilds one that no longer verifies under the current policy, suite or stack; the new run card records the superseded run and why. A baseline that still verifies is replaced only with `--replace-baseline`.

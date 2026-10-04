@@ -112,15 +112,15 @@
     "promotion": {
       "min_score": 0.0,
       "german_instruction_min_delta": 0.001,
-      "format_following_min_delta": -0.005,
-      "reasoning_core_min_delta": -0.01,
-      "longcontext_min_delta": -0.01,
+      "format_following_min_delta": -0.021,
+      "reasoning_core_min_delta": -0.026,
+      "longcontext_min_delta": -0.042,
       "safety_min_delta": 0.0,
       "lm_eval_regression_tolerance": 0.01,
-      "english_bleed_max": 0.05,
-      "empty_output_max": 0.01,
-      "refusal_spike_max": 0.05,
-      "over_refusal_spike_max": 0.0,
+      "english_bleed_spike_max": 0.026,
+      "empty_output_spike_max": 0.011,
+      "refusal_spike_max": 0.011,
+      "over_refusal_spike_max": 0.026,
       "max_leakage_hits": 0
     }
   },

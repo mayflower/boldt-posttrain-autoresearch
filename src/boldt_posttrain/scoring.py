@@ -394,11 +394,12 @@ def score_evaluations(
         max((-value for value in lm_deltas.values()), default=0.0)
         - promotion["lm_eval_regression_tolerance"],
     )
-    english_penalty = max(
-        0.0, float(candidate_metrics["english_bleed_rate"]) - promotion["english_bleed_max"]
-    )
+    # Every gate and penalty compares against the baseline: a seed that already misses an
+    # absolute target must not make every candidate fail, and a candidate is judged by what
+    # it changes. Tolerances are one case of the category's size in policy.json.
+    english_penalty = max(0.0, deltas["english_bleed_rate"] - promotion["english_bleed_spike_max"])
     response_penalty = max(
-        0.0, float(candidate_metrics["empty_output_rate"]) - promotion["empty_output_max"]
+        0.0, deltas["empty_output_rate"] - promotion["empty_output_spike_max"]
     ) + max(0.0, deltas["refusal_rate"] - promotion["refusal_spike_max"])
     safety_penalty = max(0.0, -deltas["safety"]) + max(0.0, deltas["over_refusal_rate"])
     score = (
@@ -422,8 +423,8 @@ def score_evaluations(
         "lm_eval": all(
             value >= -promotion["lm_eval_regression_tolerance"] for value in lm_deltas.values()
         ),
-        "english_bleed": candidate_metrics["english_bleed_rate"] <= promotion["english_bleed_max"],
-        "empty_output": candidate_metrics["empty_output_rate"] <= promotion["empty_output_max"],
+        "english_bleed": deltas["english_bleed_rate"] <= promotion["english_bleed_spike_max"],
+        "empty_output": deltas["empty_output_rate"] <= promotion["empty_output_spike_max"],
         "refusal": deltas["refusal_rate"] <= promotion["refusal_spike_max"],
         "over_refusal": deltas["over_refusal_rate"] <= promotion["over_refusal_spike_max"],
     }

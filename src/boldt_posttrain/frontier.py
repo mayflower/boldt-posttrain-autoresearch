@@ -35,6 +35,18 @@ class FrontierError(RuntimeError):
     """Promotion evidence, integrity, or compare-and-swap validation failed."""
 
 
+class FrontierNotImproved(FrontierError):
+    """A verified, gate-passing candidate scores no higher than the current champion."""
+
+    def __init__(self, candidate_score: float, champion: dict):
+        self.candidate_score = candidate_score
+        self.champion = champion
+        super().__init__(
+            f"candidate score {candidate_score:+.3f} does not beat the champion "
+            f"{champion.get('candidate_run_id')} ({champion['score']:+.3f})"
+        )
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(
@@ -234,7 +246,7 @@ def promote_candidate(
             repository_root=repository_root,
         )
         if current is not None and artifact["score"] <= current["score"]:
-            raise FrontierError("candidate does not beat the verified current frontier")
+            raise FrontierNotImproved(artifact["score"], current)
         promotion_id = new_run_id("promote")
         history_path = frontier_root / "history" / f"{promotion_id}.json"
         run_staging = outputs_root / "runs/.staging" / promotion_id

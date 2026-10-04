@@ -22,6 +22,7 @@ from .artifacts import (
 from .policy import Policy
 from .resolver import CandidateRegistry
 from .training import (
+    ProgressCallback,
     warmup_steps_from_ratio,
     DeadlineCallback,
     _checkpoint_smoke,
@@ -263,7 +264,7 @@ def train_preference_adapter(
         train_dataset=dataset,
         processing_class=tokenizer,
         peft_config=lora,
-        callbacks=[callback],
+        callbacks=[callback, ProgressCallback(f"train_{method}")],
     )
     result = trainer.train()
     suppression_after = response_suppression_diagnostics(
