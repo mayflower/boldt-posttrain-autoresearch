@@ -1,1 +1,1 @@
-Put named experiment overlays here. The loop may edit `current.json`; use this folder to preserve successful hypotheses.
+Strict experiment files. The loop runs `configs/posttrain/secure-current.json`; select one of these with `--config`.

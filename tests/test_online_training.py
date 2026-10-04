@@ -21,8 +21,8 @@ from boldt_posttrain.online import (
 from boldt_posttrain.online_training import reverse_kl, train_online_candidate, update_ema_teacher
 from boldt_posttrain.policy import load_policy
 from boldt_posttrain.resolver import ResolvedModelRef, resolve_candidate
-from boldt_posttrain.secure_compat.config import ExperimentConfig, validate_config_dict
-from boldt_posttrain.secure_compat.data_pipeline import DataError, normalize_row, row_texts
+from boldt_posttrain.config import ExperimentConfig, validate_config_dict
+from boldt_posttrain.data_pipeline import DataError, normalize_row, row_texts
 from tests.artifact_chain import initialized_repository
 
 ROOT = Path(__file__).resolve().parents[1]

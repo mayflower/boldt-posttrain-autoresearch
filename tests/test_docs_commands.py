@@ -2,7 +2,7 @@ import shlex
 from pathlib import Path
 
 from boldt_posttrain.cli import build_parser
-from boldt_posttrain.secure_compat.config import load_experiment
+from boldt_posttrain.config import load_experiment
 
 ROOT = Path(__file__).resolve().parents[1]
 

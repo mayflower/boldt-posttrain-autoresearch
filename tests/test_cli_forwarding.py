@@ -1,12 +1,4 @@
-"""The manual `train` verbs run the loop's single producer in-process.
-
-They used to forward parsed args back into a second argparse pass in
-scripts/pt_train_*.py, which is where the float/int `--budget-minutes` mismatch
-lived and where the recipe run-card (unresolvable by the resolver) was written.
-Both are gone: `train` now calls `loop.train_one_lever`, the same producer the
-loop uses, so a manual candidate is resolver-compatible. These tests pin the
-wiring without needing a GPU.
-"""
+"""The manual `train` verbs call `loop.train_one_lever` in-process; no GPU needed."""
 
 import json
 
@@ -48,7 +40,7 @@ def test_real_train_calls_the_single_producer_with_the_named_lever(monkeypatch, 
     assert code == 0
     assert seen["lever"] == action
     assert seen["preference_method"] == (extra[1] if extra else None)
-    # Float, not int: the old int forwarding rejected the documented "90".
+    # --budget-minutes is a float; the documented "90" must parse.
     assert isinstance(seen["budget_minutes"], float) and seen["budget_minutes"] == 90.0
 
 

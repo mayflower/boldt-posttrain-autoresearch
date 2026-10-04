@@ -1,12 +1,4 @@
-"""run_experiment orchestration: the pass/promote/reject branches.
-
-The individual stages are covered elsewhere (promote_candidate in test_frontier,
-create_score in the scoring tests, the eval publisher by a real baseline run).
-What no test exercised is loop.run_experiment's own decision logic -- that a
-passing score with promote=True calls promote_candidate and reports "promoted",
-that promote=False stops at "succeeded", and that a rejected score never promotes.
-These mock the heavy stages and assert only that wiring.
-"""
+"""run_experiment's pass/promote/reject branches, with the heavy stages mocked."""
 
 from boldt_posttrain import loop, provenance
 from boldt_posttrain.resolver import ResolvedModelRef

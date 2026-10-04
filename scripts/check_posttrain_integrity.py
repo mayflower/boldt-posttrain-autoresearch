@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-"""Guard the post-training AutoResearch protected surfaces (pure stdlib).
+"""Fail if a change touches a protected post-training surface (pure stdlib).
 
-PROTECTED SURFACE. The loop may edit ONLY the editable globs (experiment configs, current.json,
-and notes under docs/experiments/). Everything that defines how a trial is JUDGED — scoring, gates,
-eval scripts, leakage checks, committed baselines, and the governance docs — is protected. This
-classifies the changed paths (from ``git status``, optionally also everything committed since a
-``--base-ref``) and FAILS if any protected surface was touched.
-
-The editable/protected globs are read from ``configs/posttrain/base.json`` (single source of truth,
-itself protected), so this guard and the documented policy can never drift apart.
+Changed paths come from ``git status`` and, with ``--base-ref``, everything committed since
+that ref. The editable and protected globs are read from ``policy.json`` (``integrity``), so
+the guard and the policy cannot drift apart. An unreadable policy fails the check.
 """
 
 from __future__ import annotations
@@ -21,38 +16,15 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE_CONFIG = ROOT / "configs" / "posttrain" / "base.json"
-
-# Fallback globs if base.json is unreadable (fail-closed: still protect the critical surfaces).
-_FALLBACK_EDITABLE = [
-    "configs/posttrain/current.json",
-    "configs/posttrain/experiments/*.json",
-    "docs/experiments/*.md",
-]
-_FALLBACK_PROTECTED = [
-    "data/eval/**",
-    "scripts/pt_eval.py",
-    "scripts/pt_score.py",
-    "scripts/pt_promote.py",
-    "scripts/check_posttrain_integrity.py",
-    "src/boldt_posttrain/scoring.py",
-    "outputs/posttrain/baseline/**",
-    "CLAUDE.md",
-    "AUTORESEARCH_POSTTRAIN.md",
-]
+POLICY = ROOT / "configs" / "posttrain" / "policy.json"
 
 
 def load_globs() -> Dict[str, List[str]]:
-    try:
-        cfg = json.loads(BASE_CONFIG.read_text(encoding="utf-8"))
-        integ = cfg.get("integrity", {})
-        editable = integ.get("editable_globs") or _FALLBACK_EDITABLE
-        protected = integ.get("protected_globs") or _FALLBACK_PROTECTED
-    except Exception:
-        editable, protected = _FALLBACK_EDITABLE, _FALLBACK_PROTECTED
-    # The scorer module is protected even though it lives in src/ (the gate's real definition).
-    protected = sorted(set(protected) | {"src/boldt_posttrain/scoring.py"})
-    return {"editable": editable, "protected": protected}
+    integrity = json.loads(POLICY.read_text(encoding="utf-8"))["integrity"]
+    return {
+        "editable": list(integrity["editable_globs"]),
+        "protected": list(integrity["protected_globs"]),
+    }
 
 
 def _glob_to_re(glob: str) -> re.Pattern:

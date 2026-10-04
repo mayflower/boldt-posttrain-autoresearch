@@ -1,4 +1,4 @@
-"""CLI adapters for the canonical artifact lifecycle; no recipe artifacts."""
+"""CLI adapters for evaluation, scoring, data, merge and status commands."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from types import SimpleNamespace
 from .policy import load_policy
 from .artifacts import ArtifactError
 from .resolver import resolve_model
-from .secure_compat.config import ConfigError, load_experiment
-from .secure_compat import data_pipeline, evaluation, merge, scoring
+from .config import ConfigError, load_experiment
+from . import data_pipeline, evaluation, merge, scoring
 
 
 def _emit(operation, *, failure_code=4):

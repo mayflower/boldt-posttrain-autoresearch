@@ -2,7 +2,7 @@
 
 from .policy import Policy
 from .resolver import ResolvedModelRef
-from .secure_compat.data_pipeline import normalize_license
+from .data_pipeline import normalize_license
 
 
 class DistillationError(RuntimeError):

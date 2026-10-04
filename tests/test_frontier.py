@@ -11,7 +11,10 @@ from boldt_posttrain.frontier import (
 )
 from boldt_posttrain.scoring import create_score
 from tests.artifact_chain import complete_chain
-from tests.test_promotion import passing_integrity
+
+
+def passing_integrity(base_ref, repository_root, policy):
+    return {"status": "pass", "base_ref": base_ref, "violations": []}
 
 
 def promoted_chain(tmp_path: Path, monkeypatch):

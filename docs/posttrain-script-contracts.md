@@ -1,9 +1,6 @@
 # Post-training CLI contracts
 
-Use `uv run --locked python -m boldt_posttrain.cli`. The compatibility scripts for
-data discovery/preparation, baseline, evaluation, score, promotion, merge, loop,
-status/report and distillation delegate directly to these verbs. `pt_log_result`
-is a separate historical TSV utility and does not participate in the trust chain.
+Use `uv run --locked python -m boldt_posttrain.cli`; it is the only entry point.
 
 Canonical commands emit a JSON result and preserve nonzero statuses. Trainer and
 third-party subprocess output may include progress logs; stdout is not guaranteed
@@ -19,14 +16,9 @@ uv run --locked python -m boldt_posttrain.cli model resolve --candidate train-sf
 uv run --locked python -m boldt_posttrain.cli eval validate-suite
 uv run --locked python -m boldt_posttrain.cli eval catalog
 uv run --locked python -m boldt_posttrain.cli status
-uv run --locked python -m boldt_posttrain.cli report
 ```
 
 Canonical commands consume strict secure configs and publish schema-v1,
 event-chained artifacts. Score accepts an exact evaluation run ID; promotion an
 exact candidate run ID and base ref. Baseline, score, merge and promotion verify
 their linked inputs. Run-card fields and roles live in `artifacts.py`.
-
-Recipe-only bootstrap, synthesis, search, mix and comparison utilities retain
-the earlier config and artifact formats. Their results are not canonical training
-candidates. See `architecture-consolidation.md` for remaining dependencies.

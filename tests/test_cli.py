@@ -120,9 +120,8 @@ def test_rlvr_defaults_to_secure_loop_config():
 
 
 def test_train_dry_run_is_a_preflight_that_writes_no_artifact(tmp_path: Path, capsys):
-    # The manual train verbs now run the loop's secure producer; dry-run is a
-    # preflight, not the old recipe path that wrote a run_card. Without a prepared
-    # data manifest it fails closed and produces no artifact.
+    # Dry-run train is a preflight: without a prepared manifest it fails closed and
+    # writes nothing.
     code = main(["train", "sft", "--dry-run", "--config", "configs/posttrain/secure-current.json"])
     result = json.loads(capsys.readouterr().out)
     assert result["mode"] == "dry_run"
@@ -264,19 +263,6 @@ def test_real_merge_requires_and_forwards_checkpoint_permission(monkeypatch, cap
     assert main([*base, "--allow-checkpoints"]) == 0
     assert captured["allow_checkpoints"] is True
     assert captured["allow_gpu"] is True
-
-
-@pytest.mark.parametrize(
-    ("entrypoint", "command"), [("main_status", "status"), ("main_report", "report")]
-)
-def test_console_entrypoints_do_not_discard_process_arguments(monkeypatch, entrypoint, command):
-    import boldt_posttrain.cli as cli
-
-    seen = []
-    monkeypatch.setattr(cli.sys, "argv", [command, "--invalid-option"])
-    monkeypatch.setattr(cli, "main", lambda args: seen.extend(args) or 2)
-    assert getattr(cli, entrypoint)() == 2
-    assert seen == [command, "--invalid-option"]
 
 
 def test_integrity_check_consumes_the_subcommand_and_preserves_failure(monkeypatch):

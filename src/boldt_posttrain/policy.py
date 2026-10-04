@@ -131,11 +131,8 @@ def validate_policy(document: dict[str, Any]) -> None:
     protected = document["integrity"].get("protected_globs")
     if not isinstance(editable, list) or not isinstance(protected, list):
         raise PolicyError("policy.integrity globs must be arrays")
-    if (
-        "configs/posttrain/policy.json" not in protected
-        or "configs/posttrain/base.json" not in protected
-    ):
-        raise PolicyError("policy and base config must protect themselves")
+    if "configs/posttrain/policy.json" not in protected:
+        raise PolicyError("policy must protect itself")
     _require_keys(
         document["data"],
         {

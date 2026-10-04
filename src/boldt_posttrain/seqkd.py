@@ -195,7 +195,7 @@ def build_rows(
     language,
     teacher: Mapping[str, Any],
 ) -> tuple[list[dict[str, Any]], Counter[str], list[float]]:
-    from .secure_compat.data_pipeline import DataError, normalize_row, row_texts
+    from .data_pipeline import DataError, normalize_row, row_texts
 
     if len(generations) != len(selected):
         raise SeqKDError("teacher returned a different number of answers than prompts")
@@ -264,7 +264,7 @@ def vllm_generator(
     results: list[dict[str, Any] | None] = [None] * len(prompts)
     runnable: list[int] = []
     for index, prompt in enumerate(prompts):
-        # Render, then count: transformers 5 returns a dict from tokenize=True.
+        # Render, then count: tokenize=True returns a dict.
         rendered = tokenizer.apply_chat_template(
             prompt, tokenize=False, add_generation_prompt=True, enable_thinking=False
         )
@@ -342,15 +342,15 @@ def generate(
     """Publish one teacher-generated SFT manifest plus an event-anchored run card."""
     from .distillation import _teacher_license
     from .resolver import resolve_hub_model
-    from .secure_compat import config as config_module
-    from .secure_compat import provenance
-    from .secure_compat.data_pipeline import (
+    from . import config as config_module
+    from . import provenance
+    from .data_pipeline import (
         LanguageIdentifier,
         deduplicate,
         leakage_filter,
         verify_data_manifest,
     )
-    from .secure_compat.evaluation import suite_hash
+    from .evaluation import suite_hash
 
     config = config_module.load_experiment(config_path)
     settings = seqkd_settings(config.document)
@@ -543,7 +543,7 @@ def verify_generation(
     repository_root: Path = ROOT,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return (manifest, run card) of the pinned generation run, or fail closed."""
-    from .secure_compat.evaluation import suite_hash
+    from .evaluation import suite_hash
 
     run_id = settings["generation_run"]
     if not run_id:

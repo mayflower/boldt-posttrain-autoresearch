@@ -4,11 +4,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# The verification evidence table records commands that were actually executed on
-# the original host, including its pre-uv invocation forms. Rewriting it would
-# misstate what ran, so it is documentation of the past rather than instruction.
-HISTORICAL_DOCS = {"docs/implementation-report.md"}
-
 
 def operative_docs() -> list[Path]:
     paths = [
@@ -20,7 +15,7 @@ def operative_docs() -> list[Path]:
         *sorted((ROOT / ".claude/commands").glob("*.md")),
         ROOT / "scripts/README.md",
     ]
-    return [p for p in paths if p.relative_to(ROOT).as_posix() not in HISTORICAL_DOCS]
+    return paths
 
 
 def test_sync_script_is_uv_only_and_fails_closed():

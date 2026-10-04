@@ -18,9 +18,8 @@ is rejected as an OPD teacher; select a distinct licensed teacher revision.
 
 SDPO conditions the self-teacher on feedback or a verified demonstration. SDFT
 conditions it on demonstrations and updates an EMA teacher. These are custom
-feedback-conditioned trainers on the locked stack. Newer TRL releases offer
-experimental SDPO/SDFT trainers, but adopting them requires a separate dependency
-migration and contract checks; they are not available in pinned TRL 0.23.1.
+feedback-conditioned trainers. TRL 1.14.1 ships experimental `sdpo`/`sdft` trainers
+(`trl.experimental`); they are not used here.
 
 All three distillation methods use current student rollouts and completion-token
 distribution matching. They publish canonical checkpoints and proceed through the

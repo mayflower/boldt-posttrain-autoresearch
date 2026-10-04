@@ -10,13 +10,8 @@ from typing import Any, Mapping
 from . import config as config_module
 from .artifacts import RUN_ID_RE, EventLog, atomic_write_json, new_run_id, sha256_file
 
-# The secure readers, not the top-level recipe ones they shadow each other under:
-# - verify_data_manifest takes (data_root, policy), not a manifest path;
-# - load_manifest_rows selects shards by role ("sft_shard"), which is what the
-#   secure prepare writes; the top-level reader filters on schema/split fields the
-#   secure manifest does not carry and would silently return zero rows.
-from .secure_compat.data_pipeline import verify_data_manifest
-from .secure_compat.training import load_manifest_rows
+from .data_pipeline import verify_data_manifest
+from .training import load_manifest_rows
 from .distillation import _teacher_license
 from .evaluation import _publish_evaluation
 from .frontier import (
@@ -212,15 +207,9 @@ def train_one_lever(
 ) -> tuple[dict[str, Any], int]:
     """Run a single training lever manually and return its resolvable candidate.
 
-    This is the same producer the loop uses (`_execute_lever` -> `train_adapter`),
-    so a manually trained candidate carries a canonical run id, a structured model
-    card, and an event-chain record -- exactly what `resolver.resolve_candidate`
-    requires. It replaces `training.run_training_trial`, whose recipe-format cards
-    the resolver could never consume, which was the root of the "train -> evaluate
-    the returned id" gap.
-
-    It trains only; evaluation, scoring, and promotion remain their own commands
-    operating on the returned run id.
+    This is the producer the loop uses (`_execute_lever`), so the candidate carries the
+    run card and event-chain record `resolver.resolve_candidate` requires. It trains
+    only; evaluation, scoring and promotion are separate commands on the returned run id.
     """
     if lever not in _MANUAL_LEVERS:
         return {
@@ -275,7 +264,6 @@ def train_one_lever(
         return {"status": "failed", "error": "lever did not produce one fresh candidate"}, 4
     if result.get("status") != "succeeded":
         return {"status": result.get("status", "failed"), "run_id": run_id}, 4
-    # Prove the contract the recipe path violated: the fresh candidate resolves.
     resolve_model(policy=policy, candidate=run_id, outputs_root=outputs_root)
     return {"status": "succeeded", "run_id": run_id, "candidate": run_id}, 0
 
@@ -494,16 +482,3 @@ def verified_status(
         )["frontier"],
         "legacy_or_unverified": sorted(set(unverified)),
     }
-
-
-def run_cli(args) -> tuple[dict[str, Any], int]:
-    if args.command in {"status", "report"}:
-        return verified_status(), 0
-    return run_experiment(
-        config_path=ROOT / args.config,
-        base_ref=args.base_ref,
-        budget_minutes=args.budget_minutes,
-        promote=args.promote,
-        allow_checkpoints=args.allow_checkpoints,
-        allow_gpu=args.allow_gpu,
-    )

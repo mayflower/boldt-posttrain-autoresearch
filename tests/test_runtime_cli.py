@@ -20,12 +20,13 @@ def test_manual_eval_and_score_share_the_verified_loop_artifact_chain(
     monkeypatch.setattr(runtime_cli, "load_policy", lambda: chain["policy"])
     monkeypatch.setattr(loop, "load_policy", lambda: chain["policy"])
 
+    chain_records = evaluation.generate_cases
+
     def records(resolved, cases, *, device, deadline):
         assert deadline > 0
-        return evaluation.generate_cases(resolved, cases, device=device)
+        return chain_records(resolved, cases, device=device)
 
-    monkeypatch.setattr(runtime_cli.evaluation, "generate_cases", records)
-    monkeypatch.setattr(runtime_cli.evaluation, "run_lm_eval", evaluation.run_lm_eval)
+    monkeypatch.setattr(evaluation, "generate_cases", records)
     # Only model execution is stubbed; resolution, publishing and scoring are real.
     import torch
 

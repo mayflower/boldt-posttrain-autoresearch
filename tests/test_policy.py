@@ -39,7 +39,5 @@ def test_policy_rejects_movable_revision(tmp_path: Path):
         load_policy(path)
 
 
-def test_policy_and_base_are_protected():
-    protected = load_policy().integrity["protected_globs"]
-    assert "configs/posttrain/policy.json" in protected
-    assert "configs/posttrain/base.json" in protected
+def test_policy_protects_itself():
+    assert "configs/posttrain/policy.json" in load_policy().integrity["protected_globs"]

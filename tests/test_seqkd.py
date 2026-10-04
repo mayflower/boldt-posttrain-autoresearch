@@ -11,9 +11,9 @@ import pytest
 from boldt_posttrain import cli, loop, seqkd
 from boldt_posttrain.artifacts import ArtifactRef, EventLog, sha256_file
 from boldt_posttrain.policy import PolicyError, load_policy, validate_policy
-from boldt_posttrain.secure_compat import data_pipeline
-from boldt_posttrain.secure_compat.config import ExperimentConfig, validate_config_dict
-from boldt_posttrain.secure_compat.data_pipeline import normalize_row
+from boldt_posttrain import data_pipeline
+from boldt_posttrain.config import ExperimentConfig, validate_config_dict
+from boldt_posttrain.data_pipeline import normalize_row
 from tests.artifact_chain import initialized_repository
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -276,7 +276,7 @@ def test_generation_publishes_gated_teacher_answers_and_feeds_the_lever(tmp_path
 
 
 def test_benchmark_leakage_in_teacher_answers_publishes_nothing(tmp_path, monkeypatch):
-    from boldt_posttrain.secure_compat.evaluation import load_suite
+    from boldt_posttrain.evaluation import load_suite
 
     leaked = load_suite()[0]["prompt"]
     repository, outputs = _prepared_repository(tmp_path, monkeypatch, [_row(i) for i in range(3)])

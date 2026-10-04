@@ -23,7 +23,7 @@ class TestIntegrity(unittest.TestCase):
     def test_editable_surface_passes(self):
         cls = self.mod.classify_paths(
             [
-                "configs/posttrain/current.json",
+                "configs/posttrain/secure-current.json",
                 "configs/posttrain/experiments/foo.json",
                 "docs/experiments/note.md",
             ],
@@ -32,13 +32,15 @@ class TestIntegrity(unittest.TestCase):
         self.assertEqual(cls["protected"], [])
         self.assertEqual(len(cls["editable"]), 3)
 
-    def test_protected_scripts_flagged(self):
+    def test_judging_surfaces_are_protected(self):
         for p in (
-            "scripts/pt_score.py",
-            "scripts/pt_eval.py",
-            "scripts/pt_promote.py",
+            "configs/posttrain/policy.json",
+            "data/eval/german-core-v2.jsonl",
             "scripts/check_posttrain_integrity.py",
+            "src/boldt_posttrain/evaluation.py",
             "src/boldt_posttrain/scoring.py",
+            "src/boldt_posttrain/frontier.py",
+            "AGENTS.md",
             "CLAUDE.md",
             "AUTORESEARCH_POSTTRAIN.md",
         ):

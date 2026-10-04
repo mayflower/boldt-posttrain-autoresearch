@@ -69,9 +69,6 @@ dev = [
 
 [project.scripts]
 pt = "boldt_posttrain.cli:main"
-pt-status = "boldt_posttrain.cli:main_status"
-pt-report = "boldt_posttrain.cli:main_report"
-pt-integrity = "boldt_posttrain.cli:main_integrity"
 
 [tool.setuptools.packages.find]
 where = ["src"]

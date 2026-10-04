@@ -1,4 +1,4 @@
-"""Online candidate producers sharing the secure artifact and evaluation lifecycle.
+"""Online candidate producers sharing the artifact and evaluation lifecycle.
 
 GRPO/RLOO use TRL's on-policy samplers. OPD/SDFT/SDPO sample the current
 student inside every loss computation and score exactly those prefixes with a
@@ -308,11 +308,9 @@ def make_opd_trainer(*, model, teacher, tokenizer, dataset, args, settings, jour
                 lambda _model, _inputs, output: captured.update(logits=output.logits.detach())
             )
             try:
-                # The Trainer counts num_items_in_batch from the collated labels, which are all
-                # -100 before on-policy generation, so it is 0. TRL 1.x GKD divides the loss by
-                # it (inf/NaN); TRL 0.23 ignored it and averaged over the generated completion
-                # tokens. Passing None keeps that per-token mean; the Trainer's own gradient
-                # accumulation scaling still receives the original value, as before.
+                # num_items_in_batch is counted from labels that are all -100 before on-policy
+                # generation, so it is 0 and GKD would divide by it. None gives the per-token
+                # mean over generated tokens; accumulation scaling keeps the real value.
                 loss, output = super().compute_loss(
                     model, inputs, return_outputs=True, num_items_in_batch=None
                 )
@@ -427,8 +425,8 @@ def train_online_candidate(
     from trl import GRPOConfig, RLOOConfig
     from trl.experimental.gkd import GKDConfig
 
-    from .secure_compat import provenance
-    from .secure_compat.training import (
+    from . import provenance
+    from .training import (
         collect_model_metadata,
         create_model_and_tokenizer,
         validate_target_modules,
@@ -494,7 +492,7 @@ def train_online_candidate(
                 raise ValueError(
                     "OPD requires the exact student tokenizer and chat template; cross-tokenizer fallback is forbidden"
                 )
-            from .secure_compat.evaluation import load_transformers_model
+            from .evaluation import load_transformers_model
 
             if teacher_ref.artifact:
                 verify_artifact_ref(teacher_ref.artifact, root=repository_root)
@@ -537,7 +535,6 @@ def train_online_candidate(
             "max_steps": training["max_steps"],
             "num_train_epochs": training["num_train_epochs"],
             "learning_rate": training["learning_rate"],
-            # Transformers 5 removed warmup_ratio; warmup_steps in [0, 1) is the same ratio.
             "warmup_steps": warmup_steps_from_ratio(
                 training["warmup_ratio"], training["max_steps"]
             ),
@@ -568,8 +565,7 @@ def train_online_candidate(
                 **common,
                 "per_device_eval_batch_size": settings["batch_size"],
                 "num_generations": settings["num_generations"],
-                # TRL 1.x removed max_prompt_length and never truncates prompts; every
-                # prompt was already checked against it by _encode, which fails closed.
+                # TRL never truncates prompts; _encode already rejects over-long ones.
                 "max_completion_length": settings["max_completion_length"],
                 "temperature": settings["temperature"],
                 "beta": settings["beta"],

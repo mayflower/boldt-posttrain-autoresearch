@@ -182,25 +182,24 @@
   ],
   "integrity": {
     "editable_globs": [
-      "configs/posttrain/current.json",
       "configs/posttrain/secure-current.json",
       "configs/posttrain/experiments/*.json",
       "docs/experiments/*.md"
     ],
     "protected_globs": [
       "configs/posttrain/policy.json",
-      "configs/posttrain/base.json",
       "configs/posttrain/license_reviews.json",
       "data/eval/**",
-      "src/boldt_posttrain/scoring.py",
+      "src/boldt_posttrain/evaluation.py",
       "src/boldt_posttrain/frontier.py",
-      "scripts/pt_eval.py",
-      "scripts/pt_score.py",
-      "scripts/pt_promote.py",
+      "src/boldt_posttrain/scoring.py",
+      "src/boldt_posttrain/verifiers.py",
+      "scripts/build_eval_suite.py",
       "scripts/check_posttrain_integrity.py",
-      "outputs/posttrain/baseline/current.json",
-      "CLAUDE.md",
-      "AUTORESEARCH_POSTTRAIN.md"
+      "outputs/posttrain/baseline/**",
+      "AGENTS.md",
+      "AUTORESEARCH_POSTTRAIN.md",
+      "CLAUDE.md"
     ]
   }
 }

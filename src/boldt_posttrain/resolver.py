@@ -195,10 +195,7 @@ def resolve_hub_model(requested: str, policy: Policy) -> ResolvedModelRef:
             raise ResolutionError("Hub models must use repo_id@40-character-commit")
     else:
         repo_id, revision = match.group("repo"), match.group("revision")
-    # Use the official huggingface_hub client, not a hand-rolled urllib fetch: it
-    # verifies TLS via certifi, downloads through hf-xet, and caches the
-    # files so a second resolve is free. The previous urllib path reinvented this
-    # and broke on hosts without a system CA bundle.
+    # huggingface_hub verifies TLS via certifi and caches files, so a second resolve is free.
     try:
         from huggingface_hub import hf_hub_download
         from huggingface_hub.utils import HfHubHTTPError, LocalEntryNotFoundError
@@ -207,9 +204,8 @@ def resolve_hub_model(requested: str, policy: Policy) -> ResolvedModelRef:
 
     # No separate model_info() revision check: HUB_REF_RE guarantees a 40-hex commit,
     # and hf_hub_download(revision=<sha>) returns that exact immutable commit or fails,
-    # so the revision is verified by construction. Try the cache first
-    # (local_files_only) and hit the network only on a miss -- a warm cache resolves
-    # with no round-trips, which matters where the Hub metadata call is slow.
+    # so the revision is verified by construction. The cache is tried first, so a
+    # warm cache resolves without network round-trips.
     def _fetch_file(name: str) -> Path:
         try:
             return Path(hf_hub_download(repo_id, name, revision=revision, local_files_only=True))

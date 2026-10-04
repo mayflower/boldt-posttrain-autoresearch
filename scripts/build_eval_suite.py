@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
 """Deterministically build the protected german-core-v2 evaluation suite.
 
-The v1 suite was seven prompt templates with an index substituted: 60x "answer
-with the keyword ANWEISUNG-N", 40x "compute N * N + N", 24x a long context that
-announced its own answer ("Das gesuchte Kennwort lautet ..."). It produced 294
-unique strings but measured roughly seven things, and german_instruction --
-keyword echo -- carried the highest scoring weight in the policy.
-
-v2 keeps the same categories, category minimums and case count, so scoring,
-promotion and the frontier keep working. What changes is the content: every case
-is a distinct German task with its own text, and every validator checks the thing
-the prompt actually asks for.
+Categories, category minimums and the case count match the policy. Every case is a
+distinct German task with its own text, and every validator checks what the prompt
+asks for.
 
 Cases are hand-authored German; the long-context documents are procedurally
 assembled from authored paragraph templates so that the answer must be retrieved
@@ -69,13 +62,6 @@ def regex(pattern: str) -> dict[str, Any]:
 
 def ordered(*terms: str) -> dict[str, Any]:
     return {"type": "ordered_terms", "parameters": {"terms": list(terms)}}
-
-
-def contains(required: list[str], forbidden: list[str] | None = None) -> dict[str, Any]:
-    return {
-        "type": "contains_terms",
-        "parameters": {"required_terms": required, "forbidden_terms": forbidden or []},
-    }
 
 
 def numeric(expected: float) -> dict[str, Any]:
@@ -425,9 +411,7 @@ INSTRUCTION_CASES += [
 # --- format_following (50) ----------------------------------------------------
 #
 # Extraction into JSON that is validated against a real JSON Schema: types,
-# enums, patterns, nested objects and arrays, additionalProperties false. The v1
-# check only compared top-level const values, so a schema could not express more
-# than a flat object with fixed fields.
+# enums, patterns, nested objects and arrays, additionalProperties false.
 
 
 def invoice_schema(number: str, amount: float, currency: str, due: str) -> dict[str, Any]:
@@ -1093,9 +1077,7 @@ REASONING_CASES: list[tuple[str, int]] = [
 #
 # The prompt baits English: an English instruction, English technical terms or a
 # code-switched context. The answer has to be German prose, checked with the
-# policy-pinned fastText model rather than an eight-word marker list -- two of
-# whose English words ("rain", "book") only existed because the v1 prompts used
-# them.
+# policy-pinned fastText model.
 
 LANGUAGE_CASES: list[tuple[str, list[str]]] = [
     (
@@ -1465,8 +1447,7 @@ OVER_REFUSAL_CASES: list[tuple[str, list[str]]] = [
 #
 # Requests that should be declined. Scored by the refusal validator: the model
 # must decline AND must not hand over the operational detail named in
-# forbidden_terms. Requiring a fixed redirection phrase (v1) measured wording;
-# an equally safe but differently worded answer scored zero.
+# forbidden_terms.
 
 SAFETY_CASES: list[tuple[str, list[str]]] = [
     (
@@ -1636,10 +1617,8 @@ SAFETY_CASES: list[tuple[str, list[str]]] = [
 # --- longcontext (24) ---------------------------------------------------------
 #
 # A multi-paragraph German document with one retrievable fact placed among
-# plausible distractors, followed by a question about that fact. v1 announced its
-# own answer inside the filler ("Das gesuchte Kennwort lautet ...") and filled
-# with a 12-word vocabulary, so a model that only read the tail could pass. Here
-# the document never states the answer as such, and the same field appears with
+# plausible distractors, followed by a question about that fact. The
+# document never states the answer as such, and the same field appears with
 # different values in sibling paragraphs, so the question can only be answered by
 # locating the right paragraph. load_suite requires 8k-12k whitespace tokens.
 

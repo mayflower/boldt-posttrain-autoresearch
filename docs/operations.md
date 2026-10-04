@@ -16,9 +16,8 @@ seed accessibility/fingerprints, disk space, lm-eval task validity, and Mergekit
 
 ## Downloads
 
-The locked `huggingface-hub==1.16.1` downloads models and datasets through `hf-xet`,
-its built-in accelerated backend. `hf-transfer` and `HF_HUB_ENABLE_HF_TRANSFER` are no
-longer used.
+The locked `huggingface-hub==1.16.1` downloads models and datasets through its built-in
+`hf-xet` backend.
 
 ## Dry Plans
 

@@ -1,17 +1,11 @@
-"""Guard the properties that separate a real suite from a templated fixture.
-
-v1 was seven prompt templates with an index substituted: 294 unique strings but
-about seven distinct tasks, and the highest-weighted metric (german_instruction)
-only asked the model to echo a keyword. These tests fail if the suite drifts back
-toward that shape.
-"""
+"""Guard the properties that separate a real suite from a templated fixture."""
 
 import json
 import re
 from collections import Counter
 from pathlib import Path
 
-from boldt_posttrain.secure_compat.evaluation import load_suite, score_output
+from boldt_posttrain.evaluation import load_suite, score_output
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = ROOT / "data/eval/german-core-v2.jsonl"
@@ -43,8 +37,7 @@ def test_suite_loads_and_has_the_documented_shape():
 
 
 def test_prompts_are_not_one_template_per_category():
-    # The v1 failure was ~12 prompts sharing a single template. Require real
-    # variety: no single collapsed template may cover a whole category.
+    # No single collapsed template may cover a whole category.
     by_category: dict[str, list[str]] = {}
     for case in _cases():
         by_category.setdefault(case["category"], []).append(_template(case["prompt"]))
@@ -72,11 +65,8 @@ def test_validators_match_the_task_they_claim():
 
 
 def test_instruction_answers_span_many_shapes():
-    # german_instruction carries the highest scoring weight; v1's answers were a
-    # single family (ANWEISUNG-000 .. ANWEISUNG-059), so the metric rewarded
-    # echoing one template. Real instruction following produces many answer
-    # shapes -- dates, IDs, yes/no, single words, category labels -- so no single
-    # collapsed answer template may dominate the category.
+    # german_instruction carries the highest scoring weight, so no single collapsed
+    # answer template may dominate it.
     answers = [
         str(case["validator"]["parameters"].get("expected", case["validator"]["type"]))
         for case in _cases()
@@ -87,27 +77,23 @@ def test_instruction_answers_span_many_shapes():
     assert dominant <= max(3, len(answers) // 5), (
         f"instruction answers collapse to {dominant}/{len(answers)} of one shape"
     )
-    # And no case may quote its own answer inside the instruction sentence, which
-    # is exactly what v1 did ("Antworte ... mit dem Kennwort ANWEISUNG-000"):
-    # the model only had to copy the token back. Extraction and classification
-    # legitimately contain the answer earlier -- in the source text or the option
-    # list -- but the final instruction names the field, not the value.
+    # No case may quote its own answer in the instruction sentence. Extraction and
+    # classification contain it earlier (source text, option list); the final
+    # instruction names the field, not the value.
     for case in _cases():
         if case["category"] != "german_instruction" or case["validator"]["type"] != "exact":
             continue
         answer = str(case["validator"]["parameters"]["expected"])
         last_sentence = re.split(r"(?<=[.?!])\s+", case["prompt"].strip())[-1]
         # A closed choice ("... Ja oder Nein") names the alternatives in the
-        # instruction; that is selection, not echo. Pure echo names only the one
-        # answer, as v1 did.
+        # instruction; that is selection, not echo.
         closed_choice = " oder " in last_sentence
         assert closed_choice or answer not in last_sentence, case["case_id"]
 
 
 def test_longcontext_answer_is_not_announced_in_the_context():
-    # v1 wrote "Das gesuchte Kennwort lautet <answer>" into the filler, so the
-    # tail alone sufficed. The answer must appear as a value in exactly one
-    # paragraph, never labelled as the answer.
+    # The answer appears as a value in exactly one paragraph, never labelled as the
+    # answer.
     for case in _cases():
         if case["category"] != "longcontext":
             continue

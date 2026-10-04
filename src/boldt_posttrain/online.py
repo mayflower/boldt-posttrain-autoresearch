@@ -197,12 +197,32 @@ def validate_truth(kind: str, truth: Any) -> None:
             raise ValueError("ordered_terms ground truth must contain distinct terms")
 
 
+def parse_gold_solution(solution: str) -> Any:
+    try:
+        from math_verify import parse
+    except ImportError as exc:
+        raise RuntimeError("math verification requires the rl extra") from exc
+    if not isinstance(solution, str) or not solution.strip():
+        raise ValueError("math gold solution must be non-empty text")
+    parsed = parse(solution)
+    if not parsed:
+        raise ValueError(f"math-verify could not parse gold solution: {solution!r}")
+    return parsed
+
+
+def math_accuracy(response: str, solution: str) -> float:
+    """Exact Math-Verify accuracy; an unparseable answer scores zero, never partial credit."""
+    from math_verify import parse, verify
+
+    gold = parse_gold_solution(solution)
+    prediction = parse(response)
+    return float(bool(prediction) and verify(gold, prediction))
+
+
 def verify_response(response: str, kind: str, truth: Mapping[str, Any]) -> tuple[float, str]:
     validate_truth(kind, truth)
     if kind == "math_accuracy":
-        from .verified_rl import math_accuracy_reward
-
-        reward = math_accuracy_reward([response], [truth["value"]])[0]
+        reward = math_accuracy(response, truth["value"])
     elif kind == "json_schema":
         import jsonschema
 
@@ -282,8 +302,6 @@ def online_rows(
             if "task_type" in item:
                 validate_truth(item["task_type"], item["ground_truth"])
                 if item["task_type"] == "math_accuracy":
-                    from .verified_rl import parse_gold_solution
-
                     parse_gold_solution(item["ground_truth"]["value"])
             if method == "sdft" and not item.get("demonstration"):
                 raise ValueError("SDFT requires a non-empty demonstration")

@@ -57,7 +57,7 @@ so the project hooks in `.claude/settings.json` are active.
 /pt-data dry        plan data discovery and preparation; then /pt-data real (once)
 /pt-baseline real   create the immutable seed baseline (once, GPU)
 /pt-run 3 real      let the agent run up to 3 serial research rounds
-/pt-status          verified status, frontier and report
+/pt-status          verified status and frontier
 ```
 
 What `/pt-run N real` does per round: Claude Code captures the base Git ref once, writes its
@@ -183,7 +183,7 @@ Merge inputs must name exact, scored candidate run IDs in the config.
 
 One deterministic experiment round is the `loop run` command shown above for `/pt-run`.
 
-`status` and `report` return verified JSON from the canonical event chain and pointers.
+`status` returns verified JSON from the canonical event chain and pointers.
 
 ## Trust Model
 

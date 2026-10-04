@@ -62,7 +62,7 @@ def test_pretool_guard_denies_write_and_shell_bypass():
         module.allowed({"tool_name": "Bash", "tool_input": {"command": approved + " > result"}})[0]
         is False
     )
-    # The bare interpreter form is no longer the supported entry point.
+    # The bare interpreter form is rejected.
     assert (
         module.allowed(
             {"tool_name": "Bash", "tool_input": {"command": "python -m boldt_posttrain.cli status"}}
