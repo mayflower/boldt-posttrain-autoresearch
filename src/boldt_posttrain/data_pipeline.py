@@ -454,9 +454,22 @@ def discover(policy: Policy, *, api=None, sample_limit: int = 20) -> dict[str, A
                 )
                 continue
             for config in configs:
-                for split in get_dataset_split_names(
-                    listed.id, config_name=config, revision=revision
-                ):
+                try:
+                    splits = get_dataset_split_names(
+                        listed.id, config_name=config, revision=revision
+                    )
+                except Exception as exc:
+                    candidates.append(
+                        {
+                            "dataset_id": listed.id,
+                            "dataset_revision_sha": revision,
+                            "config": config,
+                            "training_usable": False,
+                            "rejection_reasons": [f"split_resolution_failed:{type(exc).__name__}"],
+                        }
+                    )
+                    continue
+                for split in splits:
                     reasons: list[str] = []
                     if (
                         script_files
@@ -469,14 +482,14 @@ def discover(policy: Policy, *, api=None, sample_limit: int = 20) -> dict[str, A
                         reasons.append("gated_or_private")
                     sample: list[dict[str, Any]] = []
                     if "remote_code_required" not in reasons:
-                        stream = load_dataset(
-                            listed.id,
-                            name=config,
-                            split=split,
-                            revision=revision,
-                            streaming=True,
-                        )
                         try:
+                            stream = load_dataset(
+                                listed.id,
+                                name=config,
+                                split=split,
+                                revision=revision,
+                                streaming=True,
+                            )
                             for index, row in enumerate(stream):
                                 if index >= sample_limit:
                                     break

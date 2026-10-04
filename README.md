@@ -47,8 +47,7 @@ claude
 ```
 
 On start, `CLAUDE.md` loads the agent contract `AGENTS.md`, and a session hook prints a short
-orientation with the next steps. On the first start in a new checkout, accept the trust prompt
-so the project hooks in `.claude/settings.json` are active.
+orientation with the next steps.
 
 ### A typical session
 
@@ -81,53 +80,24 @@ Further commands for single steps:
 | `/pt-eval dry\|real <run-id>` | evaluate one exact candidate |
 | `/pt-trial dry\|real <run-id>` | evaluate and score one exact candidate |
 | `/pt-merge dry\|real` | merge search over scored candidates |
-| `/pt-search <search-config.json>` | serial Successive Halving search |
-| `/pt-failures <dev-eval-run-id>` | failure statistics from a development evaluation |
+| `/pt-seqkd dry\|real` | teacher generation for sequence-level distillation |
 | `/pt-integrity --base-ref REF` | default-deny integrity gate |
 | `/pt-promote <run-id> <base-ref>` | promote one verified candidate |
 
 The `/pt-*` commands are human-invoked only (`disable-model-invocation`): Claude cannot trigger
 them itself. Each command pre-authorizes exactly the CLI calls it needs. A CLI call Claude makes
-directly through Bash is allowed by the guard but still goes through the normal permission prompt,
-so do not bypass permissions if you want to approve real runs yourself. Slash commands also work non-interactively, for
+directly through Bash goes through the normal permission prompt, so do not bypass permissions if
+you want to approve real runs yourself. Slash commands also work non-interactively, for
 example `claude -p "/pt-orient"`. Long `/pt-run` sessions are best kept in an interactive
 session (e.g. inside `tmux`) so the verdicts stay visible.
 
-### What the agent can and cannot do
+### What the agent may change
 
-A PreToolUse hook (`.claude/hooks/guard_posttrain.py`) enforces the trust boundary for the
-`Bash`, `Edit`, `Write`, `Read`, `Glob` and `Grep` tools:
-
-- Writes only to `configs/posttrain/secure-current.json`, `configs/posttrain/experiments/*.json`
-  and `docs/experiments/*.md`. Policy, scorer, evaluation data, source code, baselines and
-  runtime artifacts are blocked.
-- Shell only for `uv run --locked python -m boldt_posttrain.cli …`, `uv run --locked git rev-parse
-  HEAD`, `uv run --locked git status --short` and `uv run --locked git diff -- …`, each as a single
-  command: no `&&`, `;`, pipes, redirections or substitutions.
-- Read, Glob and Grep are unrestricted.
-
-A blocked call is denied with the reason, and Claude adapts. Expect to see this when the agent
-first tries a chained shell command. Tools outside that list (for example `NotebookEdit` or MCP
-tools) are not covered by the hook; keep them unapproved during research sessions.
-
-### Working on this repository with Claude Code
-
-The guard also blocks ordinary development (editing `src/`, tests, docs). To work on the code
-itself, disable the hooks locally with `.claude/settings.local.json`:
-
-```json
-{ "disableAllHooks": true }
-```
-
-Delete the file before any research session. It is not ignored by Git, so `git status` shows it,
-but the integrity gate does not check `.claude/`; a forgotten override silently removes the
-trust boundary.
-
-### Other agents and manual use
-
-Codex and other agents read `AGENTS.md` directly and run the same `uv run --locked …` commands.
-They are not covered by the Claude Code hook; the CLI's own policy, integrity and promotion gates
-still apply. The commands below also work by hand without any agent.
+`AGENTS.md` limits the agent to `configs/posttrain/secure-current.json`,
+`configs/posttrain/experiments/*.json` and `docs/experiments/*.md`. The integrity gate
+(`pt integrity check`, run by every loop round and by promotion) fails a round whose changes
+touch a protected surface listed in `policy.json`: policy, scorer, evaluation data and code,
+baselines and the governance documents.
 
 ## Modes
 

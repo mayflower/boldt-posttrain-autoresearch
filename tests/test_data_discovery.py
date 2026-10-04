@@ -126,3 +126,53 @@ def test_discovery_rejects_remote_code_without_executing_stream(monkeypatch):
     candidate = discover(load_policy(), api=Api())["candidates"][0]
     assert candidate["training_usable"] is False
     assert "remote_code_required" in candidate["rejection_reasons"]
+
+
+def test_one_unreadable_config_is_rejected_without_aborting_discovery(monkeypatch):
+    import boldt_posttrain.data_pipeline as pipeline
+    import datasets
+    from datasets.inspect import SplitsNotFoundError
+
+    revision = "c" * 40
+
+    class Api:
+        def list_datasets(self, *, author: str, full: bool):
+            return [SimpleNamespace(id="openeurollm/mixed", sha=revision)]
+
+        def dataset_info(self, dataset_id: str, *, revision: str, files_metadata: bool):
+            return SimpleNamespace(
+                sha=revision,
+                card_data={"license": "apache-2.0"},
+                siblings=[],
+                gated=False,
+                private=False,
+            )
+
+    def split_names(dataset_id, *, config_name, revision):
+        if config_name == "broken":
+            raise SplitsNotFoundError("unparseable")
+        return ["train", "broken_stream"]
+
+    def load(dataset_id, *, name, split, revision, streaming):
+        if split == "broken_stream":
+            raise ValueError("cannot open")
+        return iter([{"prompt": "Warum fällt Regen?", "response": "Wegen der Schwerkraft."}])
+
+    monkeypatch.setattr(pipeline, "LanguageIdentifier", GermanLanguage)
+    monkeypatch.setattr(
+        datasets, "get_dataset_config_names", lambda *args, **kwargs: ["broken", "default"]
+    )
+    monkeypatch.setattr(datasets, "get_dataset_split_names", split_names)
+    monkeypatch.setattr(datasets, "load_dataset", load)
+    candidates = {
+        (item["config"], item.get("split")): item
+        for item in discover(load_policy(), api=Api())["candidates"]
+    }
+    assert candidates[("broken", None)]["rejection_reasons"] == [
+        "split_resolution_failed:SplitsNotFoundError"
+    ]
+    assert (
+        "sample_stream_failed:ValueError"
+        in (candidates[("default", "broken_stream")]["rejection_reasons"])
+    )
+    assert candidates[("default", "train")]["training_usable"] is True

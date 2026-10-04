@@ -9,7 +9,6 @@ It is imported below so Claude Code loads it automatically:
 
 - `/pt-*` slash commands in `.claude/commands/` are thin wrappers over the
   `uv run --locked …` commands documented in `AGENTS.md`.
-- `.claude/hooks/` enforce the editable surface (the PreToolUse guard) and print a
-  short orientation at session start.
+- `.claude/hooks/pt_welcome.sh` prints a short orientation at session start.
 
 These are conveniences; the rules in `AGENTS.md` are authoritative for every agent.

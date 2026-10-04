@@ -82,7 +82,7 @@ uv run --locked python -m boldt_posttrain.cli status
 ## Tooling notes
 
 - Claude Code additionally exposes `/pt-*` slash commands (`.claude/commands/`) as
-  thin wrappers over the commands above, plus a PreToolUse guard and a session hook
-  (`.claude/hooks/`) that enforce the editable surface. These are conveniences, not a
-  separate contract — the rules here are authoritative for every agent.
+  thin wrappers over the commands above, plus a session hook (`.claude/hooks/`) that
+  prints an orientation. These are conveniences, not a separate contract; the rules here
+  are authoritative for every agent.
 - Codex and other agents run the `uv run --locked …` commands directly.

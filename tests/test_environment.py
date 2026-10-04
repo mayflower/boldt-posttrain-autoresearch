@@ -61,6 +61,6 @@ def test_hooks_do_not_depend_on_an_activated_interpreter():
     # uv supplies the locked interpreter and PATH even on hosts without bare python.
     settings = (ROOT / ".claude/settings.json").read_text(encoding="utf-8")
     assert '"command": "python ' not in settings
-    assert '"command": "uv run --locked python ' in settings
+    assert '"command": "uv run --locked bash ' in settings
     welcome = (ROOT / ".claude/hooks/pt_welcome.sh").read_text(encoding="utf-8")
     assert "uv run --locked python " in welcome
