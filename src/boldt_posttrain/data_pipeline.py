@@ -913,6 +913,7 @@ def run_cli(args, *, outputs_root: Path | None = None) -> tuple[dict[str, Any], 
     outputs_root = outputs_root if outputs_root is not None else OUTPUTS
     policy = load_policy()
     if args.data_command == "discover":
+        started = time.monotonic()
         run_id = new_run_id("data-discover")
         staging = outputs_root / "data/.staging" / run_id
         final = outputs_root / "data" / run_id
@@ -935,7 +936,7 @@ def run_cli(args, *, outputs_root: Path | None = None) -> tuple[dict[str, Any], 
             "finished_at": __import__("datetime")
             .datetime.now(__import__("datetime").timezone.utc)
             .isoformat(),
-            "duration_seconds": 0.0,
+            "duration_seconds": time.monotonic() - started,
             "command": ["python", "-m", "boldt_posttrain.cli", "data", "discover", "--real"],
             "git": provenance.collect_git("HEAD"),
             "policy": {"path": str(policy.path), "sha256": sha256_file(policy.path)},

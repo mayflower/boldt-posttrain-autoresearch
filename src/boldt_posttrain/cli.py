@@ -358,6 +358,18 @@ def _report_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _guide_command(_args: argparse.Namespace) -> int:
+    """Explain where the project stands and what to run next."""
+    from .guide import render_guide
+
+    try:
+        print(render_guide(load_policy(), outputs_root=OUTPUTS, repository_root=ROOT), end="")
+    except Exception as exc:  # noqa: BLE001
+        print(json.dumps({"status": "failed", "error": f"{type(exc).__name__}: {exc}"}))
+        return 5
+    return 0
+
+
 def _status_command(_args):
     from .runtime_cli import status
 
@@ -491,6 +503,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = commands.add_parser("status")
     status.set_defaults(handler=_status_command)
+    guide = commands.add_parser("guide", help="where the project stands and what to run next")
+    guide.set_defaults(handler=_guide_command)
     report = commands.add_parser("report")
     report.add_argument("--loop", required=True, help="exact loop run ID")
     report.set_defaults(handler=_report_command)

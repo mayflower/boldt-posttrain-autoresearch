@@ -2,17 +2,17 @@
 # SessionStart hook: the same locked environment as the loop.
 uv run --locked python - <<'PYWELCOME'
 import json
-print(json.dumps({"systemMessage": """PostTrain AutoResearch — Boldt DC 1B German
 
-Read AGENTS.md, configs/posttrain/policy.json and AUTORESEARCH_POSTTRAIN.md.
-/pt-orient            readiness and the next command
-/pt-data real         discover and prepare verified training data
-/pt-baseline real     create or rebuild the seed baseline (GPU)
-/pt-seqkd real        optional: Qwen3.8 teacher answers for the seqkd lever (GPU, 2-3 h)
-/pt-run <n> real      n serial research rounds: train, evaluate, score, promote
-/pt-status            verified status, frontier and rounds
-/pt-report <loop-id>  report of one round: settings, metrics, gates, decision
+try:
+    from boldt_posttrain.guide import render_guide
+    from boldt_posttrain.policy import load_policy
 
-Stop on technical or integrity failure. Real runs require explicit GPU/checkpoint permission.
-"""}))
+    message = render_guide(load_policy())
+except Exception as exc:  # the overview must never block a session
+    message = (
+        "PostTrain AutoResearch: the status overview failed "
+        f"({type(exc).__name__}: {exc}).\n"
+        "Run /pt-orient. Order: /pt-data real, /pt-baseline real, /pt-run 1 real."
+    )
+print(json.dumps({"systemMessage": message}))
 PYWELCOME

@@ -46,8 +46,9 @@ cd boldt-posttrain-autoresearch
 claude
 ```
 
-On start, `CLAUDE.md` loads the agent contract `AGENTS.md`, and a session hook prints a short
-orientation with the next steps.
+On start, `CLAUDE.md` loads the agent contract `AGENTS.md`, and a session hook prints where the
+project stands (training data, baseline, rounds, champion) and the next command with what it does,
+why it is needed and how long it took last time. `/pt-orient` and `pt guide` show the same overview.
 
 ### A typical session
 

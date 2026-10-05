@@ -35,6 +35,7 @@ from .report import (
     score_lines,
     training_summary,
 )
+from .guide import readiness
 from .scoring import create_score, load_baseline
 from .seqkd import validate_seqkd_policy, verify_generation
 from .training import train_adapter
@@ -625,43 +626,4 @@ def verified_status(
         )["frontier"],
         "legacy_or_unverified": sorted(set(unverified)),
         "readiness": readiness(policy, outputs_root=outputs_root, repository_root=repository_root),
-    }
-
-
-def readiness(
-    policy: Policy, *, outputs_root: Path = OUTPUTS, repository_root: Path = ROOT
-) -> dict[str, Any]:
-    """Whether the loop prerequisites verify under the current policy, and what is next."""
-
-    def check(verify) -> dict[str, Any]:
-        try:
-            return {"status": "ok", "run_id": verify()}
-        except Exception as exc:  # noqa: BLE001 -- report, never raise from status
-            return {"status": "invalid", "error": f"{type(exc).__name__}: {exc}"}
-
-    data = check(
-        lambda: verify_data_manifest(
-            outputs_root / "data", policy, repository_root=repository_root
-        )["run_id"]
-    )
-    baseline = check(
-        lambda: load_baseline(
-            outputs_root / "baseline",
-            policy,
-            outputs_root=outputs_root,
-            repository_root=repository_root,
-        ).run_card["run_id"]
-    )
-    next_command = (
-        "/pt-data real"
-        if data["status"] != "ok"
-        else "/pt-baseline real"
-        if baseline["status"] != "ok"
-        else "/pt-run <rounds> real"
-    )
-    return {
-        "loop_ready": data["status"] == "ok" and baseline["status"] == "ok",
-        "data_manifest": data,
-        "baseline": baseline,
-        "next_command": next_command,
     }
